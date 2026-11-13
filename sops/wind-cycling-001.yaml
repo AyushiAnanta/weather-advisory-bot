@@ -1,0 +1,13 @@
+id: wind-cycling-001
+category: exercise
+severity: high
+applies_to:
+  - cycling
+conditions:
+  all:
+    - source: hourly
+      field: wind_gusts_10m
+      agg: max
+      op: ">="
+      value: 40
+guidance: gusts at this level are a safety risk for cycling and two-wheelers; recommend postponing.

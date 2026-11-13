@@ -1,0 +1,17 @@
+id: uv-exercise-001
+category: exercise
+severity: medium
+applies_to:
+  - outdoor_exercise
+conditions:
+  all:
+    - source: hourly
+      field: uv_index
+      agg: max
+      window:
+        day: today
+        start_hour: 11
+        end_hour: 16
+      op: ">="
+      value: 8
+guidance: avoid unprotected exercise in that window, use sunscreen, reschedule to early morning or evening.
