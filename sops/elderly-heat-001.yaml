@@ -1,0 +1,21 @@
+id: elderly-heat-001
+category: vulnerable_groups
+severity: high
+applies_to:
+  - elderly
+conditions:
+  all:
+    - source: hourly
+      field: apparent_temperature
+      agg: max
+      window:
+        day: today
+        start_hour: 11
+        end_hour: 16
+      op: ">="
+      value: 32
+guidance: >
+  Feels-like temperature is forecast to reach or exceed 32°C between 11am and
+  4pm today. For elderly individuals, recommend limiting outdoor exposure
+  during this window, staying hydrated, and avoiding unnecessary exertion in
+  direct sun.

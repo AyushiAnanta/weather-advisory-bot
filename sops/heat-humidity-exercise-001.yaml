@@ -1,0 +1,21 @@
+id: heat-humidity-exercise-001
+category: exercise
+severity: high
+applies_to:
+  - outdoor_exercise
+conditions:
+  all:
+    - source: hourly
+      field: apparent_temperature
+      agg: max
+      window:
+        day: today
+        start_hour: 11
+        end_hour: 16
+      op: ">="
+      value: 35
+guidance: >
+  Feels-like temperature is forecast to reach or exceed 35°C between 11am and
+  4pm today. Advise against unprotected outdoor exercise during this window;
+  recommend rescheduling to early morning or evening, staying hydrated, and
+  taking breaks in shade if exercise cannot be postponed.

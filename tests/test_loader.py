@@ -6,6 +6,7 @@ from app.sop_loader import all_activity_tags, load_sops, required_fields
 
 
 SOPS_DIR = Path(__file__).parents[1] / "sops"
+SAMPLE_SOPS_DIR = Path(__file__).parent / "fixtures" / "sample_sops"
 VALID_SOP = """id: sample
 category: exercise
 severity: low
@@ -21,7 +22,28 @@ guidance: Example
 
 
 def test_valid_directory_loads_three_sops():
-    assert len(load_sops(SOPS_DIR)) == 3
+    assert len(load_sops(SAMPLE_SOPS_DIR)) == 3
+
+
+def test_sop_without_override_defaults_to_false(tmp_path):
+    (tmp_path / "default-override.yaml").write_text(VALID_SOP, encoding="utf-8")
+    assert load_sops(tmp_path)[0].override is False
+
+
+def test_sop_with_boolean_override_loads_true(tmp_path):
+    (tmp_path / "boolean-override.yaml").write_text(VALID_SOP + "override: true\n", encoding="utf-8")
+    assert load_sops(tmp_path)[0].override is True
+
+
+@pytest.mark.parametrize(
+    ("yaml_value", "expected"),
+    [("\"true\"", True), ("1", True)],
+)
+def test_sop_coerces_string_and_integer_override_values(tmp_path, yaml_value, expected):
+    (tmp_path / "coerced-override.yaml").write_text(
+        VALID_SOP + f"override: {yaml_value}\n", encoding="utf-8"
+    )
+    assert load_sops(tmp_path)[0].override is expected
 
 
 def test_uv_sop_has_expected_window():
@@ -37,7 +59,7 @@ def test_picnic_sop_has_four_conditions_and_rubric():
 
 
 def test_required_fields_are_locked_to_sample_sops():
-    assert required_fields(load_sops(SOPS_DIR)) == {
+    assert required_fields(load_sops(SAMPLE_SOPS_DIR)) == {
         "current": [],
         "hourly": [
             "precipitation_probability",
@@ -175,7 +197,7 @@ def test_sop_without_conditions_raises(tmp_path):
 
 
 def test_all_activity_tags():
-    assert all_activity_tags(load_sops(SOPS_DIR)) == [
+    assert all_activity_tags(load_sops(SAMPLE_SOPS_DIR)) == [
         "cycling",
         "outdoor_exercise",
         "picnic",

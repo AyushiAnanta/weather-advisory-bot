@@ -1,0 +1,21 @@
+id: high-precipitation-probability-travel-001
+category: travel
+severity: medium
+applies_to:
+  - travel
+conditions:
+  all:
+    - source: hourly
+      field: precipitation_probability
+      agg: max
+      window:
+        day: today
+        start_hour: 0
+        end_hour: 23
+      op: ">="
+      value: 70
+guidance: >
+  The probability of precipitation is forecast to reach 70% or higher
+  at some point today. Warn about possible travel delays and recommend
+  checking local weather alerts before departure. Suggest allowing
+  additional travel time.

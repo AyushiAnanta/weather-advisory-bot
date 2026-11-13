@@ -1,0 +1,21 @@
+id: cold-morning-jog-001
+category: exercise
+severity: low
+applies_to:
+  - outdoor_exercise
+  - running
+conditions:
+  all:
+    - source: hourly
+      field: temperature_2m
+      agg: min
+      window:
+        day: today
+        start_hour: 5
+        end_hour: 8
+      op: "<="
+      value: 10
+guidance: >
+  Temperature is forecast to drop to 10°C or below between 5am and 8am today.
+  Not a safety concern — recommend starting gradually and dressing in
+  suitable layers for an early run or walk.

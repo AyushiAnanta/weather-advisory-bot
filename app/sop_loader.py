@@ -86,6 +86,7 @@ class SOP(StrictModel):
     conditions: Conditions
     guidance: str
     rubric: str | None = None
+    override: bool = False
 
     @field_validator("id")
     @classmethod

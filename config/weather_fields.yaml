@@ -11,11 +11,13 @@ current:
   - uv_index
 hourly:
   - temperature_2m
+  - apparent_temperature
   - precipitation_probability
   - precipitation
   - wind_speed_10m
   - wind_gusts_10m
   - uv_index
+  - visibility
   - weather_code
   - pressure_msl
 daily:
