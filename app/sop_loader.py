@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
 Severity = Literal["info", "low", "medium", "high"]
@@ -87,26 +87,26 @@ class SOP(StrictModel):
     guidance: str
     rubric: str | None = None
 
-    @model_validator(mode="after")
-    def validate_activity_tags(self):
-        if not self.id.strip():
-            raise ValueError("id must not be empty")
-        if not self.applies_to:
-            raise ValueError("applies_to must not be empty")
-        if "*" in self.applies_to and self.applies_to != ["*"]:
+    @field_validator("id")
+    @classmethod
+    def id_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("applies_to")
+    @classmethod
+    def applies_to_must_be_valid(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("must not be empty")
+        if "*" in value and value != ["*"]:
             raise ValueError('applies_to must be ["*"] when using wildcard')
-        return self
+        return value
 
 
 def _validation_field(error: dict) -> str:
     location = ".".join(str(part) for part in error["loc"])
-    if location:
-        return location
-    message = error["msg"]
-    for field in ("applies_to", "id"):
-        if field in message:
-            return field
-    return message.split(":", 1)[0].split(" ", 1)[0]
+    return location or "file"
 
 
 def _load_allowlist(path: str | Path) -> dict[str, list[str]]:

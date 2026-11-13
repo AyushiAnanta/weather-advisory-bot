@@ -57,6 +57,20 @@ def test_unknown_severity_names_file_and_field(tmp_path):
     assert str(exc.value).startswith("bad-severity.yaml: severity:")
 
 
+def test_empty_yaml_names_file_as_field(tmp_path):
+    (tmp_path / "empty.yaml").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("empty.yaml: file:")
+
+
+def test_yaml_list_top_level_names_file_as_field(tmp_path):
+    (tmp_path / "list-top-level.yaml").write_text("- first\n- second\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("list-top-level.yaml: file:")
+
+
 def test_unknown_weather_field_reports_file_field_and_allowed_list(tmp_path):
     path = tmp_path / "bad-weather-field.yaml"
     path.write_text(VALID_SOP.replace("temperature_2m", "made_up_field"), encoding="utf-8")
