@@ -1,0 +1,9 @@
+- Policies live only in sops/*.yaml. No SOP wording, thresholds or city names in Python code.
+- The LLM may only (a) extract fields from the user question and (b) write the final reply. It never picks the SOP, the severity, or any number.
+- The compose step must not receive the raw user message.
+- Every number in a reply must come from fetched weather facts; a validator enforces it.
+- If geocoding or weather fails, or no SOP matches, return fixed template text with no LLM call.
+- Geocoding is India-only: countryCode=IN plus a code-side country_code == "IN" filter. First Indian result wins, and replies always show "name, admin1, India".
+- Weather requests use timezone=auto. "now" comes from the API's current.time, never the system clock.
+- No ReAct/tool-calling agent, no RAG over SOPs.
+- Do only the task asked. Do not build ahead. After each task, run the tests and show the real output.

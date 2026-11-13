@@ -1,0 +1,8 @@
+requests
+pydantic>=2
+pyyaml
+langgraph
+langchain-core
+streamlit
+pytest
+python-dotenv
