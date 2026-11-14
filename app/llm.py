@@ -62,7 +62,11 @@ def real_understand(
         "Extract only what is stated in the user message. Never invent a city or activity. "
         "Use session_summary only to understand follow-up phrasing such as 'what about tomorrow instead'; "
         "never use it to invent a new city or activity on your own initiative. Return null when a city, "
-        "activity, or time reference is not stated. An activity_tag must be one of the allowed tags."
+        "activity, or time reference is not stated. An activity_tag must be one of the allowed tags. "
+        'Set time_ref to "tomorrow" ONLY if the user\'s message explicitly refers to tomorrow or the next day. '
+        'Set time_ref to "this_evening" ONLY if it explicitly refers to this evening or tonight. '
+        'For "today", "now", "right now", or no time words at all, time_ref must be null. '
+        "Guessing a time is wrong; null is the default."
     )
     user_content = json.dumps(
         {
@@ -79,6 +83,7 @@ def real_understand(
             {"role": "user", "content": user_content},
         ],
         response_format=_response_format("question_extraction", schema),
+        temperature=0,
     )
     try:
         result = json.loads(_response_text(response))
@@ -118,6 +123,7 @@ def real_compose(compose_input: ComposeInput) -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
+        temperature=0,
     )
     return _response_text(response)
 
@@ -145,6 +151,7 @@ def real_classify(classify_input: dict) -> str:
             {"role": "user", "content": json.dumps(classify_input, ensure_ascii=False)},
         ],
         response_format=_response_format("classifier_outcome", schema),
+        temperature=0,
     )
     try:
         parsed = json.loads(_response_text(response))

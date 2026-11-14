@@ -89,11 +89,40 @@ def test_malformed_understand_response_raises_value_error(monkeypatch):
         llm.real_understand("Check weather", ["cycling"], {})
 
 
+def test_understand_prompt_is_explicit_and_request_uses_zero_temperature(monkeypatch):
+    requests, _ = install_fake_openai(
+        monkeypatch,
+        json.dumps({"city": None, "activity_tag": None, "time_ref": None, "is_followup": False}),
+    )
+
+    llm.real_understand("What should I do?", ["cycling"], {})
+
+    assert requests[0]["temperature"] == 0
+    prompt = requests[0]["messages"][0]["content"].lower()
+    assert "null" in prompt
+    assert "explicitly" in prompt
+
+
+def test_understand_returns_model_time_ref_without_second_guessing(monkeypatch):
+    expected = {
+        "city": "Sample Place",
+        "activity_tag": "cycling",
+        "time_ref": "tomorrow",
+        "is_followup": False,
+    }
+    install_fake_openai(monkeypatch, json.dumps(expected))
+
+    result = llm.real_understand("Is it safe to cycle today?", ["cycling"], {})
+
+    assert result == expected
+
+
 @pytest.mark.parametrize("label", ["suitable", "marginal", "unsuitable"])
 def test_real_classify_decodes_each_allowed_label(monkeypatch, label):
     requests, _ = install_fake_openai(monkeypatch, json.dumps({"label": label}))
 
     assert llm.real_classify({"rubric": "Rubric text.", "facts": []}) == label
+    assert requests[0]["temperature"] == 0
     schema = requests[0]["response_format"]["json_schema"]["schema"]
     assert schema["properties"]["label"]["enum"] == ["suitable", "marginal", "unsuitable"]
     assert "Rubric text." in requests[0]["messages"][0]["content"]
@@ -112,6 +141,7 @@ def test_real_compose_returns_text_without_user_message_field(monkeypatch):
 
     fields = {field.name for field in dataclass_fields(ComposeInput)}
     assert result == "Use care based on the forecast."
+    assert requests[0]["temperature"] == 0
     assert not any("message" in name or "history" in name for name in fields)
     assert "Write 2-4 sentences" in requests[0]["messages"][0]["content"]
     assert "never invent numbers" in requests[0]["messages"][0]["content"].lower()
