@@ -52,17 +52,28 @@ def _load_examples() -> list[str]:
     return examples
 
 
+def _load_panel_messages() -> dict[str, str]:
+    messages_path = Path(__file__).parent / "config" / "messages.yaml"
+    with messages_path.open(encoding="utf-8") as file:
+        messages = yaml.safe_load(file)
+    return {
+        key: messages[key]
+        for key in ("why_clarify", "why_error", "why_rejected")
+    }
+
+
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = uuid.uuid4().hex
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if st.sidebar.button("New chat"):
-    st.session_state.thread_id = uuid.uuid4().hex
-    st.session_state.messages = []
-    st.rerun()
-
 st.title("Weather guidance")
+with st.container():
+    if st.button("New chat"):
+        st.session_state.thread_id = uuid.uuid4().hex
+        st.session_state.messages = []
+        st.rerun()
+
 if not st.session_state.messages:
     st.write("I only look up Indian cities, and advice comes only from written policies (SOPs).")
     st.subheader("Try an example")
@@ -71,14 +82,10 @@ if not st.session_state.messages:
     for index, example in enumerate(_load_examples()):
         if example_columns[index % 2].button(example, key=f"example-{index}", use_container_width=True):
             selected_example = example
-
-    if selected_example is not None:
-        user_message = selected_example
-    else:
-        user_message = st.chat_input("Ask about weather and an activity", max_chars=_max_chars())
 else:
-    user_message = st.chat_input("Ask about weather and an activity", max_chars=_max_chars())
+    selected_example = None
 
+panel_messages = _load_panel_messages()
 latest_assistant_index = max(
     (index for index, item in enumerate(st.session_state.messages) if item["role"] == "assistant"),
     default=-1,
@@ -98,10 +105,14 @@ for index, item in enumerate(st.session_state.messages):
                 st.write(f"Policy: {sop['id']} ({sop['severity']}, {sop['category']})")
             elif result["reply_kind"] == "no_match":
                 st.write("No policy applies to this question")
+            elif result["reply_kind"] == "clarify":
+                st.write(panel_messages["why_clarify"])
+            elif result["reply_kind"] == "error":
+                st.write(panel_messages["why_error"])
+            elif result["reply_kind"] == "rejected":
+                st.write(panel_messages["why_rejected"])
             elif result["reply_kind"] == "fallback":
                 st.write(result["failure_reason"] or "Weather lookup unavailable")
-            elif result["reply_kind"] == "rejected":
-                st.write(result["reply_body"])
             else:
                 st.write(result["failure_reason"] or result["reply_kind"])
 
@@ -118,9 +129,17 @@ for index, item in enumerate(st.session_state.messages):
             if result["also_applies"]:
                 st.write("Also applies: " + ", ".join(result["also_applies"]))
 
+user_message = selected_example or st.chat_input(
+    "Ask about weather and an activity", max_chars=_max_chars()
+)
+
 if user_message:
     st.session_state.messages.append({"role": "user", "content": user_message})
-    service = st.session_state.get("_chat_service_override") or get_chat_service()
-    response = service.ask(st.session_state.thread_id, user_message)
+    with st.chat_message("user"):
+        st.write(user_message)
+    with st.chat_message("assistant"):
+        with st.spinner("Checking the forecast and policies..."):
+            response = get_chat_service().ask(st.session_state.thread_id, user_message)
+        st.write(response["reply_body"])
     st.session_state.messages.append({"role": "assistant", "result": response})
     st.rerun()

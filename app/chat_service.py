@@ -28,6 +28,9 @@ def _load_chat_messages() -> dict[str, str]:
         "chat_rejected_session_limit",
         "chat_rejected_daily_limit",
         "chat_error",
+        "why_clarify",
+        "why_error",
+        "why_rejected",
     }
     if not isinstance(raw, dict) or any(
         not isinstance(raw.get(key), str) or not raw[key].strip() for key in required

@@ -10,3 +10,6 @@ chat_rejected_disabled: Chat is temporarily unavailable. Please try again later.
 chat_rejected_session_limit: This chat has reached its message limit. Start a new chat to continue.
 chat_rejected_daily_limit: The service message limit has been reached. Please try again later.
 chat_error: Something went wrong while preparing a response. Please try again.
+why_clarify: I needed a city, so no policy was checked.
+why_error: Something went wrong, so no policy was checked.
+why_rejected: This message was not processed.

@@ -60,10 +60,12 @@ def make_service(
     facts=None,
     geocode_result=None,
     weather_ok=True,
+    classify_results=None,
     clock=lambda: 100.0,
 ):
     extraction_queue = deque(extractions or [{"city": "Sample Place", "activity_tag": "cycling"}])
     facts_queue = deque(facts or [facts_with_wind(45)])
+    classify_queue = deque(classify_results or ["suitable"])
     calls = {"understand": 0, "geocode": [], "fetch": 0, "compose": 0, "classify": 0}
     location = geocode_result or GeoResult(
         ok=True,
@@ -96,7 +98,7 @@ def make_service(
 
     def classify(_classify_input):
         calls["classify"] += 1
-        return "suitable"
+        return classify_queue.popleft() if classify_queue else "suitable"
 
     deps = {
         "understand": understand,
@@ -138,6 +140,46 @@ def test_no_match_response_has_no_sop():
     assert result["reply_kind"] == "no_match"
     assert result["sop"] is None
     assert result["also_applies"] == []
+
+
+def test_classifier_response_includes_sop_and_all_five_fact_values():
+    facts = facts_with_wind(17)
+    facts["hourly"]["precipitation_probability"] = [12] * 24
+    facts["hourly"]["temperature_2m"] = [19 + (hour % 7) for hour in range(24)]
+    facts["hourly"]["wind_gusts_10m"] = [8 + (hour % 10) for hour in range(24)]
+    facts["hourly"]["uv_index"] = [hour % 9 for hour in range(24)]
+    expected = {
+        ("precipitation_probability", "max"): 12,
+        ("temperature_2m", "min"): min(facts["hourly"]["temperature_2m"][10:]),
+        ("temperature_2m", "max"): max(facts["hourly"]["temperature_2m"][10:]),
+        ("wind_gusts_10m", "max"): max(facts["hourly"]["wind_gusts_10m"][10:]),
+        ("uv_index", "max"): max(facts["hourly"]["uv_index"][10:]),
+    }
+    service, _calls = make_service(
+        extractions=[{"city": "Sample Place", "activity_tag": "picnic"}],
+        facts=[facts],
+    )
+
+    result = service.ask("picnic-thread", "Is a picnic comfortable?")
+
+    assert result["reply_kind"] == "classifier"
+    assert result["sop"] == {"id": "picnic-fuzzy-001", "severity": "info", "category": "leisure"}
+    assert len(result["trigger_values"]) == 5
+    assert {
+        (item["field"], item["agg"]): item["actual"] for item in result["trigger_values"]
+    } == expected
+
+
+def test_classifier_retry_then_fail_returns_no_match_without_sop():
+    service, _calls = make_service(
+        extractions=[{"city": "Sample Place", "activity_tag": "picnic"}],
+        classify_results=["excellent", "excellent"],
+    )
+
+    result = service.ask("picnic-thread", "Is a picnic comfortable?")
+
+    assert result["reply_kind"] == "no_match"
+    assert result["sop"] is None
 
 
 def test_geocode_failure_returns_fallback_without_forecast():
