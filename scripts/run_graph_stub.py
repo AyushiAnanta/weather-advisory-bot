@@ -3,12 +3,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
+import os
 
 from app.graph import build_graph
-from app.matcher import resolve
+from app.llm import real_classify, real_compose, real_understand
 from app.sop_loader import load_sops
-from app.stubs import stub_compose
 from app.weather import fetch_weather, geocode
 
 
@@ -19,22 +23,20 @@ def main() -> None:
     parser.add_argument("--thread", required=True)
     args = parser.parse_args()
 
-    extraction = {
-        "city": args.city,
-        "activity_tag": args.activity,
-        "time_ref": None,
-        "is_followup": False,
-    }
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("OPENAI_API_KEY is not set. Add it to .env or the environment.")
+
     deps = {
+        "understand": real_understand,
+        "compose": real_compose,
+        "classify": real_classify,
         "geocode": geocode,
         "fetch_weather": fetch_weather,
-        "understand": lambda _message, _allowed_tags, _summary: extraction,
-        "compose": stub_compose,
-        "classify": lambda _classify_input: "marginal",
     }
     graph = build_graph(load_sops("sops"), deps)
+    user_message = f"Is it safe to {args.activity} in {args.city}?"
     result = graph.invoke(
-        {"user_message": ""},
+        {"user_message": user_message},
         config={"configurable": {"thread_id": args.thread}},
     )
     print("reply:", result.get("reply"))

@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from langgraph.checkpoint.memory import MemorySaver
+import yaml
 
 from app.graph import ComposeInput, build_graph
 from app.matcher import resolve
@@ -152,6 +153,23 @@ def test_geocode_failure_falls_back_without_fetch_or_compose():
     assert calls["compose"] == []
 
 
+def test_understand_exception_routes_to_llm_fallback_without_weather_calls():
+    deps, calls = make_deps()
+
+    def fail_understand(*_args):
+        raise TimeoutError("simulated model timeout")
+
+    deps["understand"] = fail_understand
+    configured_messages = yaml.safe_load(Path("config/messages.yaml").read_text(encoding="utf-8"))
+
+    result = invoke(build_graph(SOPS, deps))
+
+    assert result["reply_kind"] == "fallback"
+    assert result["reply"] == configured_messages["llm_unavailable"]
+    assert calls["geocode"] == []
+    assert calls["fetch"] == []
+
+
 def test_weather_failure_falls_back_without_compose():
     deps, calls = make_deps(weather_ok=False)
 
@@ -269,6 +287,25 @@ def test_session_reuses_location_activity_and_previous_decision():
     assert len(calls["fetch"]) == 2
     assert calls["compose"][1].previous_decision.sop_id == first["cited_sop_ids"][0]
     assert "Sample Place, Sample Region, India" in second["reply"]
+
+
+def test_time_ref_shifts_matching_but_cites_real_forecast_time():
+    facts = facts_with(
+        {"uv_index": {14: 9}, "weather_code": {20: 95}},
+        now="2026-11-13T10:00",
+    )
+    deps, _ = make_deps(
+        extractions=[extraction(activity="outdoor_exercise", time_ref="this_evening")],
+        fact_results=[facts],
+    )
+
+    result = invoke(build_graph(SOPS, deps))
+
+    matched_ids = {item["sop_id"] for item in result["matched"]}
+    assert "uv-exercise-001" not in matched_ids
+    assert "Policy: thunderstorm-proxy-001" in result["reply"]
+    assert "as of 2026-11-13T10:00" in result["reply"]
+    assert "as of 2026-11-13T17:00" not in result["reply"]
 
 
 def test_new_thread_without_city_clarifies():

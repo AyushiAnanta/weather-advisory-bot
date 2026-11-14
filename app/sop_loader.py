@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationIn
 
 Severity = Literal["info", "low", "medium", "high"]
 Operator = Literal[">", ">=", "<", "<=", "==", "in"]
-Day = Literal["today", "tomorrow", "requested"]
+Day = Literal["today", "tomorrow"]
 DEFAULT_ALLOWLIST_PATH = Path(__file__).parents[1] / "config" / "weather_fields.yaml"
 
 

@@ -139,6 +139,71 @@ def test_uv_window_does_not_match_when_only_8_is_outside_window():
     assert sop_matches(sop, facts, now_from(facts))[0] is False
 
 
+def test_explicit_hourly_window_does_not_match_after_its_hours():
+    facts = base_facts(now="2026-11-13T17:00")
+    facts["hourly"].update(
+        {
+            "time": [f"2026-11-13T{hour:02}:00" for hour in range(24)],
+            "uv_index": [9] * 24,
+        }
+    )
+    condition = make_sop(
+        all_conditions=[
+            hourly_condition("uv_index", "max", ">=", 8, {"day": "today", "start_hour": 11, "end_hour": 16})
+        ]
+    ).conditions.all[0]
+
+    assert evaluate_condition(condition, facts, now_from(facts)) == (False, None)
+
+
+def test_explicit_hourly_window_keeps_all_hours_when_now_is_before_it():
+    facts = base_facts(now="2026-11-13T10:00")
+    facts["hourly"].update(
+        {
+            "time": [f"2026-11-13T{hour:02}:00" for hour in range(24)],
+            "uv_index": [9] * 24,
+        }
+    )
+    condition = make_sop(
+        all_conditions=[
+            hourly_condition("uv_index", "max", ">=", 8, {"day": "today", "start_hour": 11, "end_hour": 16})
+        ]
+    ).conditions.all[0]
+
+    assert evaluate_condition(condition, facts, now_from(facts)) == (True, 9)
+
+
+def test_explicit_hourly_window_clips_hours_before_now_mid_window():
+    facts = base_facts(now="2026-11-13T13:00")
+    values = [0] * 24
+    values[11], values[12], values[13], values[14], values[15], values[16] = 90, 80, 3, 4, 5, 6
+    facts["hourly"].update(
+        {"time": [f"2026-11-13T{hour:02}:00" for hour in range(24)], "uv_index": values}
+    )
+    condition = make_sop(
+        all_conditions=[
+            hourly_condition("uv_index", "max", ">=", 6, {"day": "today", "start_hour": 11, "end_hour": 16})
+        ]
+    ).conditions.all[0]
+
+    assert evaluate_condition(condition, facts, now_from(facts)) == (True, 6)
+
+
+def test_tomorrow_window_uses_full_target_date_window_after_time_shift():
+    facts = base_facts(now="2026-11-14T00:00")
+    times = [f"2026-11-15T{hour:02}:00" for hour in range(24)]
+    values = [0] * 24
+    values[11:17] = [4, 5, 6, 7, 8, 9]
+    facts["hourly"].update({"time": times, "uv_index": values})
+    condition = make_sop(
+        all_conditions=[
+            hourly_condition("uv_index", "max", ">=", 9, {"day": "tomorrow", "start_hour": 11, "end_hour": 16})
+        ]
+    ).conditions.all[0]
+
+    assert evaluate_condition(condition, facts, now_from(facts)) == (True, 9)
+
+
 @pytest.mark.parametrize(
     ("changes", "expected"),
     [

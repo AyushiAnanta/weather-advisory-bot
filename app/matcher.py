@@ -73,7 +73,11 @@ def evaluate_condition(condition: Any, facts: dict[str, Any], now: datetime) -> 
                 timestamp_date = datetime.fromisoformat(timestamp)
             except ValueError:
                 continue
-            if timestamp_date.date() == target_date and start_hour <= timestamp_date.hour <= end_hour:
+            if (
+                timestamp_date.date() == target_date
+                and start_hour <= timestamp_date.hour <= end_hour
+                and (window is None or target_date != now.date() or timestamp_date.hour >= now.hour)
+            ):
                 value = values[index]
                 if value is not None:
                     selected.append(value)

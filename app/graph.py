@@ -2,12 +2,14 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
 from typing import Any, TypedDict
 
+import yaml
 from langgraph.graph import END, START, StateGraph
 
 from app.classifier import classifier_facts, outcome_text
 from app.matcher import MatchedSOP, ResolvedDecision, match_sops as matcher_match_sops, resolve
-from app.messages import load_messages
+from app.messages import DEFAULT_MESSAGES_PATH, load_messages
 from app.sop_loader import SOP, all_activity_tags, required_fields
+from app.time_view import resolve_eval_now
 from app.validation import allowed_numbers_for, build_template_reply, validate_reply
 
 
@@ -106,6 +108,9 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
     fields = required_fields(sops)
     allowed_tags = all_activity_tags(sops)
     messages = load_messages()
+    with DEFAULT_MESSAGES_PATH.open(encoding="utf-8") as message_file:
+        configured_messages = yaml.safe_load(message_file)
+    messages["llm_unavailable"] = configured_messages["llm_unavailable"]
     classifiers_by_id = {sop.id: sop for sop in sops if sop.kind == "classifier"}
 
     def begin_turn(state: GraphState) -> dict[str, Any]:
@@ -132,12 +137,18 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             "last_location_display": (state.get("last_location") or {}).get("display"),
             "last_activity_tag": state.get("last_activity_tag"),
         }
-        extracted = deps["understand"](
-            state.get("user_message", ""),
-            allowed_tags,
-            session_summary,
-        )
+        try:
+            extracted = deps["understand"](
+                state.get("user_message", ""),
+                allowed_tags,
+                session_summary,
+            )
+        except Exception:
+            return {"failure_reason": "llm_unavailable"}
         return {"extracted": extracted}
+
+    def after_understand(state: GraphState) -> str:
+        return "fallback" if state.get("failure_reason") else "merge_context"
 
     def merge_context(state: GraphState) -> dict[str, Any]:
         extracted = state.get("extracted") or {}
@@ -191,8 +202,9 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
 
     def match_node(state: GraphState) -> dict[str, Any]:
         facts = state["facts"]
-        now = datetime.fromisoformat(facts["now"])
-        matched = matcher_match_sops(sops, facts, state.get("activity_tag"), now)
+        real_now = datetime.fromisoformat(facts["now"])
+        eval_now = resolve_eval_now(real_now, state.get("time_ref"))
+        matched = matcher_match_sops(sops, facts, state.get("activity_tag"), eval_now)
         serialized = []
         for item in matched:
             data = _matched_to_dict(item)
@@ -254,6 +266,9 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
         for attempt in range(2):
             try:
                 label = deps["classify"](classify_input)
+            except Exception:
+                return {"failure_reason": "llm_unavailable", "reply_kind": "classify_failed"}
+            try:
                 text = outcome_text(sop, label)
             except ValueError:
                 if attempt == 0:
@@ -269,6 +284,8 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
         return {"reply_kind": "classify_failed"}
 
     def after_classify(state: GraphState) -> str:
+        if state.get("failure_reason") == "llm_unavailable":
+            return "fallback"
         return "finalize" if state.get("reply_kind") == "classifier" else "no_match"
 
     def no_match(state: GraphState) -> dict[str, Any]:
@@ -288,7 +305,13 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             location_display=state["location"]["display"],
             previous_decision=previous,
         )
-        return {"reply": deps["compose"](compose_input)}
+        try:
+            return {"reply": deps["compose"](compose_input)}
+        except Exception:
+            return {"failure_reason": "llm_unavailable"}
+
+    def after_compose(state: GraphState) -> str:
+        return "fallback" if state.get("failure_reason") == "llm_unavailable" else "validate"
 
     def validate_node(state: GraphState) -> dict[str, Any]:
         decision = state["decision"]
@@ -378,7 +401,11 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
 
     graph.add_edge(START, "begin_turn")
     graph.add_edge("begin_turn", "understand")
-    graph.add_edge("understand", "merge_context")
+    graph.add_conditional_edges(
+        "understand",
+        after_understand,
+        {"fallback": "fallback", "merge_context": "merge_context"},
+    )
     graph.add_conditional_edges("merge_context", route_city, {"clarify": "clarify", "geocode": "geocode"})
     graph.add_edge("clarify", "finalize")
     graph.add_conditional_edges("geocode", after_geocode, {"fallback": "fallback", "fetch_weather": "fetch_weather"})
@@ -390,9 +417,13 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
         route_decision,
         {"compose": "compose", "classify": "classify", "no_match": "no_match"},
     )
-    graph.add_conditional_edges("classify", after_classify, {"finalize": "finalize", "no_match": "no_match"})
+    graph.add_conditional_edges(
+        "classify",
+        after_classify,
+        {"fallback": "fallback", "finalize": "finalize", "no_match": "no_match"},
+    )
     graph.add_edge("no_match", "finalize")
-    graph.add_edge("compose", "validate")
+    graph.add_conditional_edges("compose", after_compose, {"fallback": "fallback", "validate": "validate"})
     graph.add_edge("validate", "finalize")
     graph.add_edge("finalize", END)
     return graph.compile(checkpointer=checkpointer)
