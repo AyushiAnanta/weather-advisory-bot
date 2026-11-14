@@ -47,6 +47,7 @@ class GraphState(TypedDict, total=False):
     trigger_values: list[dict[str, Any]]
     failure_reason: str | None
     reply: str
+    reply_body: str
     reply_kind: str
     cited_sop_ids: list[str]
     classifier_sop_id: str | None
@@ -328,6 +329,7 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
 
     def finalize(state: GraphState) -> dict[str, Any]:
         reply = state.get("reply", "")
+        reply_body = reply
         kind = state.get("reply_kind")
         decision = state.get("decision")
         location = state.get("location")
@@ -374,7 +376,12 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
                 "cited_sop_ids": citation_ids,
             }
         )
-        updates: dict[str, Any] = {"reply": reply, "history": history, "last_decision": last_decision}
+        updates: dict[str, Any] = {
+            "reply": reply,
+            "reply_body": reply_body,
+            "history": history,
+            "last_decision": last_decision,
+        }
         if state.get("city_text"):
             updates["last_city_text"] = state["city_text"]
         if state.get("activity_tag"):

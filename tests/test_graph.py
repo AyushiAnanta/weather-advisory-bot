@@ -143,6 +143,21 @@ def test_graph_success_composes_and_cites_matching_wind_policy():
     json.dumps(result)
 
 
+def test_finalize_stores_uncited_reply_body_for_advice_and_no_match():
+    wind_facts = facts_with({"wind_gusts_10m": {15: 45}})
+    advice_deps, _ = make_deps(fact_results=[wind_facts])
+    advice = invoke(build_graph(SOPS, advice_deps))
+
+    assert "Policy:" not in advice["reply_body"]
+    assert "Policy:" in advice["reply"]
+
+    no_match_deps, _ = make_deps(extractions=[extraction(activity="unlisted_activity")])
+    no_match = invoke(build_graph(SOPS, no_match_deps))
+
+    assert no_match["reply_kind"] == "no_match"
+    assert no_match["reply_body"] == no_match["reply"]
+
+
 def test_geocode_failure_falls_back_without_fetch_or_compose():
     deps, calls = make_deps(geocode_result=GeoResult(ok=False, reason="geocoding_unavailable"))
 

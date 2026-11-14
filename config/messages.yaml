@@ -4,3 +4,9 @@ geocoding_unavailable: I can't look up that location right now. Please try again
 weather_unavailable: I can't reach the weather service right now, so I can't give you advice based on a forecast.
 no_match: We don't have guidance for that.
 llm_unavailable: I'm having trouble generating a response right now. Please try again in a moment.
+chat_rejected_empty: Please enter a message before sending.
+chat_rejected_too_long: That message is too long. Please shorten it and try again.
+chat_rejected_disabled: Chat is temporarily unavailable. Please try again later.
+chat_rejected_session_limit: This chat has reached its message limit. Start a new chat to continue.
+chat_rejected_daily_limit: The service message limit has been reached. Please try again later.
+chat_error: Something went wrong while preparing a response. Please try again.
