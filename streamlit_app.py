@@ -11,6 +11,7 @@ load_dotenv()
 
 import streamlit as st
 import yaml
+from app.chat_service import format_comparison
 
 
 st.set_page_config(page_title="Weather guidance", page_icon="🌦️")
@@ -113,7 +114,7 @@ for index, item in enumerate(st.session_state.messages):
                     for policy in result["policies_checked"]:
                         st.write(f"{policy['id']} ({policy['severity']})")
                         if policy["comparisons"]:
-                            st.table(policy["comparisons"])
+                            st.text("\n".join(item["display"] for item in policy["comparisons"]))
             elif result["reply_kind"] == "clarify":
                 st.write(panel_messages["why_clarify"])
             elif result["reply_kind"] == "error":
@@ -133,14 +134,14 @@ for index, item in enumerate(st.session_state.messages):
             st.write(f"Evaluated for: {evaluated_label}")
 
             if result["trigger_values"]:
-                st.table(result["trigger_values"])
-            else:
+                st.text("\n".join(format_comparison(item, matched=True) for item in result["trigger_values"]))
+            elif result["reply_kind"] != "no_match":
                 st.caption("No trigger values.")
 
             if result["forecast"] is not None:
                 forecast = result["forecast"]
                 st.write(
-                    f"Forecast: {forecast['location']}, as of {forecast['as_of']} ({forecast['timezone']})"
+                    f"Forecast: {forecast['location']}, as of {forecast['as_of']} ({forecast['timezone']}), for {evaluated_label}"
                 )
             if result["also_applies"]:
                 st.write("Also applies: " + ", ".join(result["also_applies"]))

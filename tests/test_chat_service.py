@@ -2,12 +2,49 @@ from collections import deque
 
 import pytest
 
-from app.chat_service import ChatService
+from app.chat_service import ChatService, format_comparison
 from app.sop_loader import load_sops, required_fields
 from app.weather import GeoResult, WeatherResult
 
 
 SOPS = load_sops("sops")
+
+
+@pytest.mark.parametrize(
+    ("comparison", "expected"),
+    [
+        (
+            {"agg": "max", "field": "wind_gusts_10m", "actual": 24.5000, "op": ">=", "threshold": 40.0},
+            "max wind_gusts_10m: 24.5 >= 40 -> not met",
+        ),
+        (
+            {"agg": "max", "field": "weather_code", "actual": 95, "op": "in", "threshold": [95, 96, 99]},
+            "max weather_code: 95 in [95, 96, 99] -> not met",
+        ),
+        (
+            {"field": "precipitation_sum", "actual": 3, "op": ">=", "threshold": 65},
+            "precipitation_sum: 3 >= 65 -> not met",
+        ),
+        (
+            {"agg": "max", "field": "wind_gusts_10m", "actual": 43.9},
+            "max wind_gusts_10m: 43.9",
+        ),
+    ],
+)
+def test_format_comparison(comparison, expected):
+    assert format_comparison(comparison) == expected
+
+
+def test_format_comparison_triggered_with_threshold_says_met():
+    comparison = {
+        "agg": "max",
+        "field": "wind_gusts_10m",
+        "actual": 43.9,
+        "op": ">=",
+        "threshold": 40,
+    }
+
+    assert format_comparison(comparison, matched=True) == "max wind_gusts_10m: 43.9 >= 40 -> met"
 EXPECTED_KEYS = {
     "thread_id",
     "reply_body",

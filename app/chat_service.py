@@ -18,6 +18,36 @@ MESSAGES_PATH = Path(__file__).parents[1] / "config" / "messages.yaml"
 WINDOW_SECONDS = 24 * 60 * 60
 
 
+def _number_text(value: Any) -> str:
+    if isinstance(value, float):
+        return format(value, ".15g")
+    if isinstance(value, list):
+        return "[" + ", ".join(_number_text(item) for item in value) + "]"
+    return str(value)
+
+
+def format_comparison(comparison: dict[str, Any], sop: SOP | None = None, matched: bool = False) -> str:
+    """Format a comparison without mutating its source data."""
+    agg = comparison.get("agg")
+    if agg is None and sop is not None:
+        conditions = (sop.conditions.all or []) + (sop.conditions.any or []) if sop.conditions else []
+        for condition in conditions:
+            if (
+                condition.source == comparison.get("source")
+                and condition.field == comparison.get("field")
+                and condition.op == comparison.get("op")
+                and condition.value == comparison.get("threshold")
+            ):
+                agg = getattr(condition, "agg", None)
+                break
+
+    prefix = f"{agg} " if agg else ""
+    text = f"{prefix}{comparison['field']}: {_number_text(comparison.get('actual'))}"
+    if "op" in comparison and "threshold" in comparison:
+        text += f" {comparison['op']} {_number_text(comparison['threshold'])} -> {'met' if matched else 'not met'}"
+    return text
+
+
 def _load_chat_messages() -> dict[str, str]:
     with MESSAGES_PATH.open(encoding="utf-8") as file:
         raw = yaml.safe_load(file)
@@ -147,6 +177,15 @@ class ChatService:
                     "as_of": facts["now"],
                     "timezone": facts.get("timezone"),
                 }
+            policies_checked = []
+            for policy in state.get("policies_checked", []):
+                policy_sop = self._sops_by_id.get(policy["id"])
+                comparisons = []
+                for comparison in policy.get("comparisons", []):
+                    item = dict(comparison)
+                    item["display"] = format_comparison(item, policy_sop)
+                    comparisons.append(item)
+                policies_checked.append({**policy, "comparisons": comparisons})
             return self._response(
                 thread_id,
                 state.get("reply_body", state.get("reply", "")),
@@ -157,7 +196,7 @@ class ChatService:
                 trigger_values=trigger_values,
                 forecast=forecast,
                 evaluated_for=state.get("evaluated_for", "today"),
-                policies_checked=state.get("policies_checked", []),
+                policies_checked=policies_checked,
                 no_match_reason=state.get("no_match_reason"),
             )
         except Exception as exc:
