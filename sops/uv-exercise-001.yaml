@@ -3,6 +3,8 @@ category: exercise
 severity: medium
 applies_to:
   - outdoor_exercise
+  - running
+  - cycling
 conditions:
   all:
     - source: hourly

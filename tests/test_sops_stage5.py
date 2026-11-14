@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.matcher import match_sops, sop_matches
+from app.matcher import match_sops, resolve, sop_matches
 from app.sop_loader import SOP, load_sops
 
 
@@ -38,6 +38,58 @@ def matching_for(facts, activity_tag):
         activity_tag,
         datetime.fromisoformat(facts["now"]),
     )
+
+
+def facts_for_uv_and_wind(uv=9, gust=20):
+    times = [f"2026-11-13T{hour:02}:00" for hour in range(24)]
+    times += [f"2026-11-14T{hour:02}:00" for hour in range(24)]
+    hourly = {
+        "time": times,
+        "apparent_temperature": [24.0] * 48,
+        "precipitation_probability": [5] * 48,
+        "temperature_2m": [24.0] * 48,
+        "uv_index": [uv if 11 <= index % 24 <= 16 and index < 24 else 2 for index in range(48)],
+        "weather_code": [3] * 48,
+        "wind_gusts_10m": [gust if index == 15 else 10 for index in range(48)],
+    }
+    return {
+        "now": "2026-11-13T12:00",
+        "timezone": "Asia/Kolkata",
+        "utc_offset_seconds": 19800,
+        "grid_latitude": 12.3,
+        "grid_longitude": 45.6,
+        "units": {"current": {}, "hourly": {}, "daily": {}},
+        "current": {},
+        "hourly": hourly,
+        "daily": {"time": ["2026-11-13", "2026-11-14"], "precipitation_sum": [0, 0]},
+    }
+
+
+def test_uv_policy_applies_to_running():
+    matched = matching_for(facts_for_uv_and_wind(), "running")
+
+    assert any(item.sop_id == "uv-exercise-001" for item in matched)
+
+
+def test_wind_policy_precedes_uv_for_cycling_when_both_match():
+    matched = matching_for(facts_for_uv_and_wind(uv=9, gust=45), "cycling")
+    decision = resolve(matched)
+
+    assert decision.primary.sop_id == "wind-cycling-001"
+    assert "uv-exercise-001" in decision.also_applies
+
+
+def test_uv_policy_is_primary_for_cycling_when_wind_does_not_match():
+    matched = matching_for(facts_for_uv_and_wind(uv=9, gust=20), "cycling")
+    decision = resolve(matched)
+
+    assert decision.primary.sop_id == "uv-exercise-001"
+
+
+def test_uv_policy_does_not_apply_to_picnic():
+    matched = matching_for(facts_for_uv_and_wind(uv=9), "picnic")
+
+    assert all(item.sop_id != "uv-exercise-001" for item in matched)
 
 
 def test_child_uv_matches_threshold_and_reports_max():
