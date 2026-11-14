@@ -1,6 +1,9 @@
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from app.sop_loader import load_sops
 
 
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9_])[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?![A-Za-z0-9_])")
@@ -47,7 +50,27 @@ def allowed_numbers_for(decision: Any, trigger_values: list[dict[str, Any]], loc
         for item in trigger_values
         if isinstance(item.get("actual"), (int, float)) and not isinstance(item.get("actual"), bool)
     ]
-    return set(guidance_numbers + trigger_numbers)
+    decision_also_applies = _get(decision, "also_applies") or []
+    cited_ids = {
+        sop_id
+        for sop_id in [_get(primary, "sop_id"), *decision_also_applies]
+        if isinstance(sop_id, str)
+    }
+    policy_numbers: list[float] = []
+    if cited_ids:
+        sop_directory = Path(__file__).resolve().parents[1] / "sops"
+        for sop in load_sops(sop_directory):
+            if sop.id not in cited_ids or sop.conditions is None:
+                continue
+            conditions = (sop.conditions.all or []) + (sop.conditions.any or [])
+            for condition in conditions:
+                values = condition.value if isinstance(condition.value, list) else [condition.value]
+                policy_numbers.extend(
+                    float(value)
+                    for value in values
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                )
+    return set(guidance_numbers + trigger_numbers + policy_numbers)
 
 
 def build_template_reply(decision: Any, location_display: str) -> str:
