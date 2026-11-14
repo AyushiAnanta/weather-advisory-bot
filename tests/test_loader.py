@@ -56,9 +56,9 @@ def test_picnic_classifier_loads_with_three_outcomes():
     picnic_sop = next(sop for sop in load_sops(SOPS_DIR) if sop.id == "picnic-fuzzy-001")
     assert picnic_sop.kind == "classifier"
     assert picnic_sop.classifier.outcomes == {
-        "suitable": "Conditions look comfortable for a picnic today.",
-        "marginal": "Conditions are mixed for a picnic today. If you go, keep an eye on the forecast and have a backup plan.",
-        "unsuitable": "Conditions look poor for a picnic today. Consider postponing or choosing an indoor alternative.",
+        "suitable": "Conditions look comfortable for a picnic.",
+        "marginal": "Conditions are mixed for a picnic. If you go, keep an eye on the forecast and have a backup plan.",
+        "unsuitable": "Conditions look poor for a picnic. Consider postponing or choosing an indoor alternative.",
     }
 
 

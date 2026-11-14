@@ -148,7 +148,11 @@ def test_real_compose_returns_text_without_user_message_field(monkeypatch):
     assert "Write 2-4 sentences" in system_prompt
     assert "never invent numbers" in system_prompt.lower()
     assert "forecast value" in system_prompt
-    assert "have reached" in system_prompt
+    assert "All values and the advice are about evaluated_for only." in system_prompt
+    assert "Do not mention any other day." in system_prompt
+    assert "Do not predict, extend or compare other days." in system_prompt
+    assert "Do not say 'remain', 'continue', 'similar', 'at least' or 'expected to stay'." in system_prompt
+    assert "Say the value is the forecast value for today." in system_prompt
     assert '"evaluated_for": "today"' in requests[0]["messages"][1]["content"]
     assert "Sample Place" in requests[0]["messages"][1]["content"]
 

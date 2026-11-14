@@ -268,7 +268,9 @@ def test_valid_picnic_classification_still_returns_classifier_reply():
 
     assert result["reply_kind"] == "classifier"
     assert result["sop"]["id"] == "picnic-fuzzy-001"
-    assert result["reply_body"].startswith("Conditions look comfortable for a picnic today.")
+    assert result["reply_body"].startswith("Conditions look comfortable for a picnic.")
+    picnic = next(sop for sop in service.sops if sop.id == "picnic-fuzzy-001")
+    assert all("today" not in outcome.lower() for outcome in picnic.classifier.outcomes.values())
 
 
 def test_geocode_failure_returns_fallback_without_forecast():

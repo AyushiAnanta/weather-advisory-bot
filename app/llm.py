@@ -107,13 +107,19 @@ def real_understand(
 
 
 def real_compose(compose_input: ComposeInput) -> str:
+    evaluated_day = {
+        "today": "today",
+        "this_evening": "this evening",
+        "tomorrow": "tomorrow",
+    }.get(compose_input.evaluated_for, "today")
     system_prompt = (
         "Write 2-4 sentences based only on the given guidance, trigger values, and location. "
         "Never invent numbers. Never cite an SOP id that was not already given. Never claim "
         "certainty beyond what the facts support. Do not add facts, locations, or thresholds. "
-        "Use the tense for the supplied evaluated_for day: describe today in the present tense; "
-        "describe this_evening and tomorrow as future forecasts (for tomorrow, never say 'have reached' "
-        "or 'currently'). Say 'forecast value', not 'actual value', and always state which day the value is for. "
+        "All values and the advice are about evaluated_for only. Do not mention any other day. "
+        "Do not predict, extend or compare other days. Do not say 'remain', 'continue', 'similar', "
+        "'at least' or 'expected to stay'. "
+        f"Say the value is the forecast value for {evaluated_day}. "
         "When stating any numeric value from the trigger values, copy the number exactly as given, "
         "character for character (e.g. if given 43.9, write 43.9 — never round to 44, never round "
         "to 40, never drop the decimal). Do not simplify, round, or approximate any number. If a "

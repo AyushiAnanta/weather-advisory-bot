@@ -58,14 +58,14 @@ def test_classifier_facts_returns_none_for_missing_data():
 @pytest.mark.parametrize(
     ("label", "expected"),
     [
-        ("suitable", "Conditions look comfortable for a picnic today."),
+        ("suitable", "Conditions look comfortable for a picnic."),
         (
             "marginal",
-            "Conditions are mixed for a picnic today. If you go, keep an eye on the forecast and have a backup plan.",
+            "Conditions are mixed for a picnic. If you go, keep an eye on the forecast and have a backup plan.",
         ),
         (
             "unsuitable",
-            "Conditions look poor for a picnic today. Consider postponing or choosing an indoor alternative.",
+            "Conditions look poor for a picnic. Consider postponing or choosing an indoor alternative.",
         ),
     ],
 )

@@ -281,8 +281,11 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
 
     def classify_node(state: GraphState) -> dict[str, Any]:
         sop = classifiers_by_id[state["classifier_sop_id"]]
-        now = datetime.fromisoformat(state["facts"]["now"])
-        calculated_facts = classifier_facts(sop, state["facts"], now)
+        time_ref = state.get("time_ref")
+        real_now = datetime.fromisoformat(state["facts"]["now"])
+        eval_now = resolve_eval_now(real_now, time_ref)
+        eval_facts = facts_for_time_ref(state["facts"], time_ref)
+        calculated_facts = classifier_facts(sop, eval_facts, eval_now)
         classify_input = {"rubric": sop.classifier.rubric, "facts": calculated_facts}
         for attempt in range(2):
             try:

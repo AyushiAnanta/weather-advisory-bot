@@ -189,6 +189,53 @@ def test_matching_wildcard_policy_still_advises_unknown_activity():
     assert result["reply_kind"] == "advice"
 
 
+def test_classifier_with_tomorrow_time_ref_uses_tomorrows_hourly_facts():
+    cases = [
+        (10, 80, "unsuitable"),
+        (80, 10, "suitable"),
+    ]
+    for today_rain_probability, tomorrow_rain_probability, expected_label in cases:
+        facts = facts_for_two_days([0, 0])
+        facts["hourly"]["precipitation_probability"] = (
+            [today_rain_probability] * 24 + [tomorrow_rain_probability] * 24
+        )
+        deps, calls = make_deps(
+            extractions=[extraction(activity="picnic", time_ref="tomorrow")],
+            fact_results=[facts],
+        )
+        classifier_inputs = []
+
+        def classify_from_rain(classify_input):
+            classifier_inputs.append(classify_input)
+            precipitation = next(
+                item["actual"]
+                for item in classify_input["facts"]
+                if item["field"] == "precipitation_probability"
+            )
+            return "unsuitable" if precipitation >= 70 else "suitable"
+
+        deps["classify"] = classify_from_rain
+        result = invoke(
+            build_graph(SOPS, deps),
+            thread=f"tomorrow-classifier-{today_rain_probability}-{tomorrow_rain_probability}",
+        )
+
+        assert len(classifier_inputs) == 1
+        assert result["reply_kind"] == "classifier"
+        assert next(
+            item["actual"]
+            for item in classifier_inputs[0]["facts"]
+            if item["field"] == "precipitation_probability"
+        ) == tomorrow_rain_probability
+        assert result["trigger_values"][0]["actual"] == tomorrow_rain_probability
+        expected_text = next(
+            sop.classifier.outcomes[expected_label]
+            for sop in SOPS
+            if sop.id == "picnic-fuzzy-001"
+        )
+        assert result["reply_body"] == expected_text
+
+
 def test_finalize_stores_uncited_reply_body_for_advice_and_no_match():
     wind_facts = facts_with({"wind_gusts_10m": {15: 45}})
     advice_deps, _ = make_deps(fact_results=[wind_facts])
@@ -256,7 +303,7 @@ def test_picnic_routes_to_classifier_and_cites_its_outcome():
     result = invoke(build_graph(SOPS, deps))
 
     assert result["reply_kind"] == "classifier"
-    assert result["reply"].startswith("Conditions look comfortable for a picnic today.")
+    assert result["reply"].startswith("Conditions look comfortable for a picnic.")
     assert result["cited_sop_ids"] == ["picnic-fuzzy-001"]
     assert len(calls["classify"]) == 1
     assert "facts" in calls["classify"][0] and "rubric" in calls["classify"][0]
@@ -281,7 +328,7 @@ def test_invalid_classifier_label_retries_then_succeeds():
     result = invoke(build_graph(SOPS, deps))
 
     assert result["reply_kind"] == "classifier"
-    assert result["reply"].startswith("Conditions are mixed for a picnic today.")
+    assert result["reply"].startswith("Conditions are mixed for a picnic.")
     assert len(calls["classify"]) == 2
 
 
