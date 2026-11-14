@@ -1,8 +1,10 @@
 from datetime import datetime
+import json
+from pathlib import Path
 
 import pytest
 
-from app.matcher import match_sops, resolve
+from app.matcher import match_sops, resolve, sop_matches
 from app.sop_loader import load_sops
 
 
@@ -206,7 +208,7 @@ THUNDERSTORM_ID = "thunderstorm-proxy-001"
 def facts_for_weather_codes(codes):
     times = [f"2026-11-13T{hour:02}:00" for hour in range(11, 11 + len(codes))]
     return {
-        "now": "2026-11-13T12:00:00",
+        "now": "2026-11-13T12:00",
         "timezone": "Asia/Kolkata",
         "utc_offset_seconds": 19800,
         "grid_latitude": 12.3,
@@ -253,6 +255,86 @@ def test_full_sop_directory_loads_nine_unique_sops():
     assert len(ids) == len(set(ids))
     assert THUNDERSTORM_ID in ids
     assert COMPOUND_ID in ids
+
+
+def facts_for_hourly_codes(code_by_hour, now):
+    return {
+        "now": now,
+        "timezone": "Asia/Kolkata",
+        "utc_offset_seconds": 19800,
+        "grid_latitude": 12.3,
+        "grid_longitude": 45.6,
+        "units": {"current": {}, "hourly": {}, "daily": {}},
+        "current": {},
+        "hourly": {
+            "time": [f"2026-11-13T{hour:02}:00" for hour in range(24)],
+            "weather_code": [code_by_hour.get(hour, 3) for hour in range(24)],
+        },
+        "daily": {"time": ["2026-11-13"]},
+    }
+
+
+def test_thunderstorm_code_before_now_is_not_matched():
+    facts = facts_for_hourly_codes({3: 95}, "2026-11-13T12:00")
+    thunderstorm = next(sop for sop in load_sops("sops") if sop.id == THUNDERSTORM_ID)
+
+    matched, _ = sop_matches(thunderstorm, facts, datetime.fromisoformat(facts["now"]))
+
+    assert matched is False
+
+
+def test_thunderstorm_code_after_now_matches_and_reports_actual():
+    facts = facts_for_hourly_codes({15: 95}, "2026-11-13T12:00")
+    thunderstorm = next(sop for sop in load_sops("sops") if sop.id == THUNDERSTORM_ID)
+
+    matched, triggers = sop_matches(thunderstorm, facts, datetime.fromisoformat(facts["now"]))
+
+    assert matched is True
+    assert triggers[0]["actual"] == 95
+
+
+def test_later_thunderstorm_code_is_reported_as_the_checked_max():
+    facts = facts_for_hourly_codes({3: 95, 18: 96}, "2026-11-13T12:00")
+    thunderstorm = next(sop for sop in load_sops("sops") if sop.id == THUNDERSTORM_ID)
+
+    matched, triggers = sop_matches(thunderstorm, facts, datetime.fromisoformat(facts["now"]))
+
+    assert matched is True
+    assert triggers[0]["actual"] == 96
+
+
+def test_thunderstorm_in_hour_containing_now_is_included():
+    """The matcher includes the whole current hour, including its 12:00 entry at 12:30."""
+    facts = facts_for_hourly_codes({12: 95}, "2026-11-13T12:30")
+    thunderstorm = next(sop for sop in load_sops("sops") if sop.id == THUNDERSTORM_ID)
+
+    matched, triggers = sop_matches(thunderstorm, facts, datetime.fromisoformat(facts["now"]))
+
+    assert matched is True
+    assert triggers[0]["actual"] == 95
+
+
+def test_recorded_thunderstorm_only_matches_when_storm_is_ahead():
+    fixture_path = Path(__file__).parent / "fixtures" / "kl_thunderstorm_partial.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    data = fixture["data"]
+    facts = {
+        "now": data["current"]["time"],
+        "hourly": data["hourly"],
+        "daily": data["daily"],
+    }
+    thunderstorm_sops = [sop for sop in load_sops("sops") if sop.id == THUNDERSTORM_ID]
+    now = datetime.fromisoformat(facts["now"])
+
+    matched_after = match_sops(thunderstorm_sops, facts, "cycling", now)
+
+    assert all(item.sop_id != THUNDERSTORM_ID for item in matched_after)
+
+    facts_before_storm = {**facts, "now": "2026-11-13T02:00"}
+    now_before_storm = datetime.fromisoformat(facts_before_storm["now"])
+    matched_before = match_sops(thunderstorm_sops, facts_before_storm, "cycling", now_before_storm)
+
+    assert any(item.sop_id == THUNDERSTORM_ID for item in matched_before)
 
 
 COMPOUND_ID = "compound-severe-weather-001"
