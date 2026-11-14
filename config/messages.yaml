@@ -1,0 +1,5 @@
+clarify_city: Which city in India should I check the weather for?
+location_not_found: I couldn't find that place in India. I can only look up places in India.
+geocoding_unavailable: I can't look up that location right now. Please try again later.
+weather_unavailable: I can't reach the weather service right now, so I can't give you advice based on a forecast.
+no_match: We don't have guidance for that.
