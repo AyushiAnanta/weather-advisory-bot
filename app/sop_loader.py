@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 
 Severity = Literal["info", "low", "medium", "high"]
@@ -78,15 +78,84 @@ class Conditions(StrictModel):
         return self
 
 
+class ClassifierFact(StrictModel):
+    source: Literal["hourly"]
+    field: str
+    agg: Literal["max", "min", "sum"]
+    window: Window | None = None
+
+
+class Classifier(StrictModel):
+    facts: list[ClassifierFact]
+    rubric: str
+    outcomes: dict[str, str]
+
+    @field_validator("facts")
+    @classmethod
+    def facts_must_not_be_empty(cls, value: list[ClassifierFact]) -> list[ClassifierFact]:
+        if not value:
+            raise ValueError("must contain at least one fact")
+        return value
+
+    @field_validator("rubric")
+    @classmethod
+    def rubric_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("outcomes")
+    @classmethod
+    def outcomes_must_have_exact_labels(cls, value: dict[str, str]) -> dict[str, str]:
+        expected = {"suitable", "marginal", "unsuitable"}
+        if set(value) != expected:
+            raise ValueError(f"must contain exactly these keys: {sorted(expected)}")
+        if any(not isinstance(text, str) or not text.strip() for text in value.values()):
+            raise ValueError("each outcome must be a non-empty string")
+        return value
+
+
 class SOP(StrictModel):
     id: str
     category: str
     severity: Severity
     applies_to: list[str]
-    conditions: Conditions
-    guidance: str
+    kind: Literal["rules", "classifier"] = "rules"
+    conditions: Conditions | None = Field(default=None, validate_default=True)
+    classifier: Classifier | None = Field(default=None, validate_default=True)
+    guidance: str | None = Field(default=None, validate_default=True)
     rubric: str | None = None
     override: bool = False
+
+    @field_validator("conditions", mode="before")
+    @classmethod
+    def conditions_required_for_rules_only(cls, value, info: ValidationInfo):
+        kind = info.data.get("kind", "rules")
+        if kind == "rules" and value is None:
+            raise ValueError("conditions are required for rules SOPs")
+        if kind == "classifier" and value is not None:
+            raise ValueError("classifier SOPs must not have conditions")
+        return value
+
+    @field_validator("classifier", mode="before")
+    @classmethod
+    def classifier_required_for_classifier_only(cls, value, info: ValidationInfo):
+        kind = info.data.get("kind", "rules")
+        if kind == "classifier" and value is None:
+            raise ValueError("classifier block is required for classifier SOPs")
+        if kind == "rules" and value is not None:
+            raise ValueError("rules SOPs must not have a classifier block")
+        return value
+
+    @field_validator("guidance", mode="before")
+    @classmethod
+    def guidance_required_for_rules_only(cls, value, info: ValidationInfo):
+        kind = info.data.get("kind", "rules")
+        if kind == "rules" and value is None:
+            raise ValueError("guidance is required for rules SOPs")
+        if kind == "classifier" and value is not None:
+            raise ValueError("classifier SOPs must not have guidance")
+        return value
 
     @field_validator("id")
     @classmethod
@@ -144,11 +213,14 @@ def load_sops(
             else:
                 message = str(exc)
             raise ValueError(f"{path.name}: {field}: {message}") from exc
-        for condition in _iter_conditions(sop):
-            if condition.field not in allowed[condition.source]:
-                allowed_names = ", ".join(allowed[condition.source])
+        fields_to_validate = [(condition.source, condition.field) for condition in _iter_conditions(sop)]
+        if sop.classifier is not None:
+            fields_to_validate.extend((fact.source, fact.field) for fact in sop.classifier.facts)
+        for source, field_name in fields_to_validate:
+            if field_name not in allowed[source]:
+                allowed_names = ", ".join(allowed[source])
                 raise ValueError(
-                    f"{path.name}: field {condition.field!r}: unknown {condition.source} weather field; "
+                    f"{path.name}: field {field_name!r}: unknown {source} weather field; "
                     f"allowed: [{allowed_names}]"
                 )
         if sop.id in ids:
@@ -159,6 +231,8 @@ def load_sops(
 
 
 def _iter_conditions(sop: SOP):
+    if sop.conditions is None:
+        return []
     return (sop.conditions.all or []) + (sop.conditions.any or [])
 
 
@@ -169,7 +243,9 @@ def all_activity_tags(sops: list[SOP]) -> list[str]:
 def required_fields(sops: list[SOP]) -> dict[str, list[str]]:
     fields: dict[str, set[str]] = {"current": set(), "hourly": set(), "daily": set()}
     for sop in sops:
-        conditions = sop.conditions
         for condition in _iter_conditions(sop):
             fields[condition.source].add(condition.field)
+        if sop.classifier is not None:
+            for fact in sop.classifier.facts:
+                fields[fact.source].add(fact.field)
     return {source: sorted(names) for source, names in fields.items()}

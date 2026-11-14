@@ -149,6 +149,8 @@ def match_sops(
 ) -> list[MatchedSOP]:
     matched_sops: list[MatchedSOP] = []
     for sop in sops:
+        if sop.kind == "classifier":
+            continue
         has_wildcard = "*" in sop.applies_to
         if activity_tag is None:
             eligible = has_wildcard

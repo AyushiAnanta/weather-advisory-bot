@@ -192,7 +192,7 @@ def test_full_sop_directory_loads_nine_unique_sops_after_stage4():
     assert {
         "wind-cycling-001",
         "uv-exercise-001",
-        "picnic-good-001",
+        "picnic-fuzzy-001",
         EXERCISE_ID,
         ELDERLY_ID,
         COLD_JOG_ID,

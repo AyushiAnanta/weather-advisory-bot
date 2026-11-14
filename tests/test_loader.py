@@ -52,10 +52,121 @@ def test_uv_sop_has_expected_window():
     assert (window.day, window.start_hour, window.end_hour) == ("today", 11, 16)
 
 
-def test_picnic_sop_has_four_conditions_and_rubric():
-    picnic_sop = next(sop for sop in load_sops(SOPS_DIR) if sop.id == "picnic-good-001")
-    assert len(picnic_sop.conditions.all) == 4
-    assert picnic_sop.rubric
+def test_picnic_classifier_loads_with_three_outcomes():
+    picnic_sop = next(sop for sop in load_sops(SOPS_DIR) if sop.id == "picnic-fuzzy-001")
+    assert picnic_sop.kind == "classifier"
+    assert picnic_sop.classifier.outcomes == {
+        "suitable": "Conditions look comfortable for a picnic today.",
+        "marginal": "Conditions are mixed for a picnic today. If you go, keep an eye on the forecast and have a backup plan.",
+        "unsuitable": "Conditions look poor for a picnic today. Consider postponing or choosing an indoor alternative.",
+    }
+
+
+CLASSIFIER_SOP = """id: classifier-sample
+category: leisure
+severity: info
+applies_to: [picnic]
+kind: classifier
+classifier:
+  facts:
+    - source: hourly
+      field: temperature_2m
+      agg: max
+  rubric: Consider comfort.
+  outcomes:
+    suitable: Good.
+    marginal: Mixed.
+    unsuitable: Poor.
+"""
+
+
+@pytest.mark.parametrize(
+    ("filename", "replace", "prefix"),
+    [
+        (
+            "missing-outcome.yaml",
+            "    unsuitable: Poor.\n",
+            "missing-outcome.yaml: classifier.outcomes:",
+        ),
+        (
+            "extra-outcome.yaml",
+            "    unsuitable: Poor.\n",
+            "extra-outcome.yaml: classifier.outcomes:",
+        ),
+    ],
+)
+def test_classifier_outcomes_require_exact_keys(tmp_path, filename, replace, prefix):
+    if filename.startswith("missing"):
+        content = CLASSIFIER_SOP.replace(replace, "")
+    else:
+        content = CLASSIFIER_SOP.replace(replace, replace + "    excellent: Great.\n")
+    (tmp_path / filename).write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith(prefix)
+
+
+def test_classifier_rejects_conditions(tmp_path):
+    content = CLASSIFIER_SOP.replace(
+        "kind: classifier\n", "kind: classifier\nconditions:\n  all:\n    - source: current\n      field: temperature_2m\n      op: '>='\n      value: 1\n"
+    )
+    (tmp_path / "classifier-with-conditions.yaml").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("classifier-with-conditions.yaml: conditions:")
+
+
+def test_classifier_rejects_empty_facts(tmp_path):
+    content = CLASSIFIER_SOP.replace(
+        "  facts:\n    - source: hourly\n      field: temperature_2m\n      agg: max\n", "  facts: []\n"
+    )
+    (tmp_path / "empty-facts.yaml").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("empty-facts.yaml: classifier.facts:")
+
+
+def test_classifier_fact_weather_field_is_checked_against_allowlist(tmp_path):
+    content = CLASSIFIER_SOP.replace("temperature_2m", "made_up_field")
+    (tmp_path / "classifier-made-up-field.yaml").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("classifier-made-up-field.yaml: field 'made_up_field':")
+
+
+def test_rules_sop_rejects_classifier_block(tmp_path):
+    content = VALID_SOP + "classifier: {}\n"
+    (tmp_path / "rules-with-classifier.yaml").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("rules-with-classifier.yaml: classifier:")
+
+
+def test_classifier_rejects_guidance(tmp_path):
+    content = CLASSIFIER_SOP + "guidance: Not allowed.\n"
+    (tmp_path / "classifier-with-guidance.yaml").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("classifier-with-guidance.yaml: guidance:")
+
+
+def test_rules_sop_requires_guidance(tmp_path):
+    content = VALID_SOP.replace("guidance: Example\n", "")
+    (tmp_path / "rules-without-guidance.yaml").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_sops(tmp_path)
+    assert str(exc.value).startswith("rules-without-guidance.yaml: guidance:")
+
+
+def test_required_fields_include_classifier_facts():
+    picnic_sop = next(sop for sop in load_sops(SOPS_DIR) if sop.id == "picnic-fuzzy-001")
+    fields = required_fields([picnic_sop])
+    assert fields["hourly"] == [
+        "precipitation_probability",
+        "temperature_2m",
+        "uv_index",
+        "wind_gusts_10m",
+    ]
 
 
 def test_required_fields_are_locked_to_sample_sops():

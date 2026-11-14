@@ -1,0 +1,27 @@
+id: picnic-fuzzy-001
+category: leisure
+severity: info
+applies_to: [picnic]
+kind: classifier
+classifier:
+  facts:
+    - source: hourly
+      field: precipitation_probability
+      agg: max
+    - source: hourly
+      field: temperature_2m
+      agg: min
+    - source: hourly
+      field: temperature_2m
+      agg: max
+    - source: hourly
+      field: wind_gusts_10m
+      agg: max
+    - source: hourly
+      field: uv_index
+      agg: max
+  rubric: Weigh rain probability, the temperature range, wind gusts and UV together. suitable means a low chance of rain, mild temperatures, light wind and moderate UV. unsuitable means a high chance of rain, extreme heat or cold, or strong gusts. marginal means mixed or borderline conditions.
+  outcomes:
+    suitable: Conditions look comfortable for a picnic today.
+    marginal: Conditions are mixed for a picnic today. If you go, keep an eye on the forecast and have a backup plan.
+    unsuitable: Conditions look poor for a picnic today. Consider postponing or choosing an indoor alternative.

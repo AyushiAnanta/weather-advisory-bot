@@ -1,9 +1,10 @@
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 from app.matcher import MatchedSOP, evaluate_condition, match_sops, resolve, sop_matches
-from app.sop_loader import SOP
+from app.sop_loader import SOP, load_sops
 
 
 def make_sop(
@@ -138,6 +139,35 @@ def test_uv_window_does_not_match_when_only_8_is_outside_window():
     assert sop_matches(sop, facts, now_from(facts))[0] is False
 
 
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, True),
+        ({"precipitation_probability": [30]}, False),
+        ({"temperature_2m": [17]}, False),
+        ({"temperature_2m_max_band": [33]}, False),
+        ({"wind_gusts_10m": [25]}, False),
+    ],
+)
+def test_picnic_numeric_bands(changes, expected):
+    facts = base_facts()
+    hourly = {
+        "time": ["2026-11-13T12:00"],
+        "precipitation_probability": [20],
+        "temperature_2m": [20],
+        "wind_gusts_10m": [20],
+    }
+    if "temperature_2m_max_band" in changes:
+        hourly["temperature_2m"] = [changes["temperature_2m_max_band"][0]]
+    else:
+        hourly.update(changes)
+    facts["hourly"] = hourly
+    fixture_dir = Path(__file__).parent / "fixtures" / "sample_sops"
+    sop = next(sop for sop in load_sops(fixture_dir) if sop.id == "picnic-good-001")
+
+    assert sop_matches(sop, facts, now_from(facts))[0] is expected
+
+
 def test_hourly_window_tomorrow_shifts_target_date():
     facts = base_facts(now="2026-11-13T10:00:00")
     facts["hourly"].update(
@@ -174,44 +204,6 @@ def test_hourly_window_tomorrow_does_not_match_todays_value():
     ).conditions.all[0]
 
     assert evaluate_condition(condition, facts, now_from(facts)) == (False, 3)
-
-
-@pytest.mark.parametrize(
-    ("changes", "expected"),
-    [
-        ({}, True),
-        ({"precipitation_probability": [30]}, False),
-        ({"temperature_2m": [17]}, False),
-        ({"temperature_2m_max_band": [33]}, False),
-        ({"wind_gusts_10m": [25]}, False),
-    ],
-)
-def test_picnic_numeric_bands(changes, expected):
-    facts = base_facts()
-    hourly = {
-        "time": ["2026-11-13T12:00"],
-        "precipitation_probability": [20],
-        "temperature_2m": [20],
-        "wind_gusts_10m": [20],
-    }
-    if "temperature_2m_max_band" in changes:
-        hourly["temperature_2m"] = [changes["temperature_2m_max_band"][0]]
-    else:
-        hourly.update(changes)
-    facts["hourly"] = hourly
-    sop = make_sop(
-        sop_id="picnic-good-001",
-        severity="info",
-        applies_to=["picnic"],
-        all_conditions=[
-            hourly_condition("precipitation_probability", "max", "<", 30),
-            hourly_condition("temperature_2m", "min", ">=", 18),
-            hourly_condition("temperature_2m", "max", "<=", 32),
-            hourly_condition("wind_gusts_10m", "max", "<", 25),
-        ],
-    )
-
-    assert sop_matches(sop, facts, now_from(facts))[0] is expected
 
 
 @pytest.mark.parametrize("threshold", [0, -100, 100])
