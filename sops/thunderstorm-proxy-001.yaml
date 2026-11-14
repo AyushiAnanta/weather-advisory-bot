@@ -1,0 +1,20 @@
+id: thunderstorm-proxy-001
+category: severe
+severity: high
+applies_to:
+  - "*"
+conditions:
+  any:
+    - source: hourly
+      field: weather_code
+      agg: max
+      window:
+        day: today
+        start_hour: 0
+        end_hour: 23
+      op: "in"
+      value: [95, 96, 99]
+guidance: >
+  Thunderstorm conditions are forecast for today (WMO weather code 95, 96, or
+  99). Recommend avoiding open ground and outdoor activity during the
+  affected hours, and staying indoors if a storm is active.
