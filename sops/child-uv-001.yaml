@@ -1,0 +1,16 @@
+id: child-uv-001
+category: vulnerable_groups
+severity: medium
+applies_to:
+  - child_outdoor_play
+conditions:
+  all:
+    - source: hourly
+      field: uv_index
+      agg: max
+      op: ">="
+      value: 6
+guidance: >
+  UV is forecast to be high for the rest of today. For children, limit direct
+  sun, use shade, a hat and sunscreen, and prefer play in the early morning or
+  evening when UV is lower.

@@ -183,11 +183,11 @@ def test_cycling_does_not_match_either_new_sop_when_conditions_match():
     assert TRAVEL_PRECIPITATION_ID not in matched_ids
 
 
-def test_full_sop_directory_loads_nine_unique_sops_after_stage4():
+def test_full_sop_directory_loads_eleven_unique_sops_after_stage5():
     sops = load_sops("sops")
     ids = [sop.id for sop in sops]
 
-    assert len(sops) == 9
+    assert len(sops) == 11
     assert len(ids) == len(set(ids))
     assert {
         "wind-cycling-001",
@@ -199,6 +199,8 @@ def test_full_sop_directory_loads_nine_unique_sops_after_stage4():
         TRAVEL_PRECIPITATION_ID,
         "thunderstorm-proxy-001",
         "compound-severe-weather-001",
+        "child-uv-001",
+        "pet-heat-001",
     } <= set(ids)
 
 
@@ -247,14 +249,16 @@ def test_thunderstorm_trigger_reports_max_code_95():
     assert thunderstorm_match.trigger_values[0]["actual"] == 95
 
 
-def test_full_sop_directory_loads_nine_unique_sops():
+def test_full_sop_directory_loads_eleven_unique_sops():
     sops = load_sops("sops")
     ids = [sop.id for sop in sops]
 
-    assert len(sops) == 9
+    assert len(sops) == 11
     assert len(ids) == len(set(ids))
     assert THUNDERSTORM_ID in ids
     assert COMPOUND_ID in ids
+    assert "child-uv-001" in ids
+    assert "pet-heat-001" in ids
 
 
 def facts_for_hourly_codes(code_by_hour, now):

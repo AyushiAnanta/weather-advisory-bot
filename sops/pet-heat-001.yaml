@@ -1,0 +1,17 @@
+id: pet-heat-001
+category: vulnerable_groups
+severity: medium
+applies_to:
+  - pet_walk
+conditions:
+  all:
+    - source: hourly
+      field: temperature_2m
+      agg: max
+      op: ">="
+      value: 35
+guidance: >
+  Air temperature is forecast to reach a high level for the rest of today.
+  Pavement can be much hotter than the air and can burn paws. Walk pets in the
+  early morning or late evening, carry water, and never leave them in a parked
+  vehicle.
