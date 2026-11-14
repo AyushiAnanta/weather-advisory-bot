@@ -63,6 +63,9 @@ def real_understand(
         "Use session_summary only to understand follow-up phrasing such as 'what about tomorrow instead'; "
         "never use it to invent a new city or activity on your own initiative. Return null when a city, "
         "activity, or time reference is not stated. An activity_tag must be one of the allowed tags. "
+        "Set activity_tag only if the user's activity clearly is one of the allowed tags. If the activity "
+        "is not on the list, or you would have to stretch a tag to fit it, return null. Never choose the "
+        "nearest tag. A kite, cricket, fishing or any other activity not on the list is null. "
         'Set time_ref to "tomorrow" ONLY if the user\'s message explicitly refers to tomorrow or the next day. '
         'Set time_ref to "this_evening" ONLY if it explicitly refers to this evening or tonight. '
         'For "today", "now", "right now", or no time words at all, time_ref must be null. '

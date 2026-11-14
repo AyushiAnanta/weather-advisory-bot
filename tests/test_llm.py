@@ -102,6 +102,25 @@ def test_understand_prompt_is_explicit_and_request_uses_zero_temperature(monkeyp
     prompt = requests[0]["messages"][0]["content"].lower()
     assert "null" in prompt
     assert "explicitly" in prompt
+    assert (
+        "set activity_tag only if the user's activity clearly is one of the allowed tags. if the activity "
+        "is not on the list, or you would have to stretch a tag to fit it, return null. never choose the "
+        "nearest tag. a kite, cricket, fishing or any other activity not on the list is null."
+    ) in prompt
+
+
+def test_understand_accepts_null_activity_tag(monkeypatch):
+    requests, _ = install_fake_openai(
+        monkeypatch,
+        json.dumps({"city": "Mumbai", "activity_tag": None, "time_ref": None, "is_followup": False}),
+    )
+
+    result = llm.real_understand("Is it a good day to fly a kite in Mumbai?", ["cycling", "picnic"], {})
+
+    assert result["activity_tag"] is None
+    schema = requests[0]["response_format"]["json_schema"]["schema"]
+    assert schema["properties"]["activity_tag"]["type"] == ["string", "null"]
+    assert schema["properties"]["activity_tag"]["enum"] == ["cycling", "picnic", None]
 
 
 def test_understand_returns_model_time_ref_without_second_guessing(monkeypatch):

@@ -15,16 +15,14 @@ from app.sop_loader import all_activity_tags, load_sops
 
 
 QUERIES = [
-    ("shuold i go cycling in chennai today", {}),
+    ("Is it a good day to fly a kite in Mumbai?", {}),
+    ("Can I play cricket in Delhi this evening?", {}),
+    ("Is it okay to go fishing in Kochi tomorrow?", {}),
+    ("Should I walk my dog in Pune?", {}),
     ("Is it safe to cycle in Chennai today?", {}),
-    (
-        "what about this evening instead?",
-        {
-            "last_location_display": "Chennai, Tamil Nadu, India",
-            "last_activity_tag": "cycling",
-        },
-    ),
-    ("should I go for a run in Pune tomorrow morning?", {}),
+    ("Can I go for a run in Pune at noon?", {}),
+    ("Is it okay to take my toddler to the park in Kolkata?", {}),
+    ("Is a picnic OK in Kolkata today?", {}),
 ]
 
 
