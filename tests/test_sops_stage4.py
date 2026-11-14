@@ -181,11 +181,11 @@ def test_cycling_does_not_match_either_new_sop_when_conditions_match():
     assert TRAVEL_PRECIPITATION_ID not in matched_ids
 
 
-def test_full_sop_directory_loads_seven_unique_sops():
+def test_full_sop_directory_loads_nine_unique_sops_after_stage4():
     sops = load_sops("sops")
     ids = [sop.id for sop in sops]
 
-    assert len(sops) == 7
+    assert len(sops) == 9
     assert len(ids) == len(set(ids))
     assert {
         "wind-cycling-001",
@@ -195,4 +195,147 @@ def test_full_sop_directory_loads_seven_unique_sops():
         ELDERLY_ID,
         COLD_JOG_ID,
         TRAVEL_PRECIPITATION_ID,
+        "thunderstorm-proxy-001",
+        "compound-severe-weather-001",
     } <= set(ids)
+
+
+THUNDERSTORM_ID = "thunderstorm-proxy-001"
+
+
+def facts_for_weather_codes(codes):
+    times = [f"2026-11-13T{hour:02}:00" for hour in range(11, 11 + len(codes))]
+    return {
+        "now": "2026-11-13T12:00:00",
+        "timezone": "Asia/Kolkata",
+        "utc_offset_seconds": 19800,
+        "grid_latitude": 12.3,
+        "grid_longitude": 45.6,
+        "units": {"current": {}, "hourly": {}, "daily": {}},
+        "current": {},
+        "hourly": {"time": times, "weather_code": codes},
+        "daily": {"time": []},
+    }
+
+
+def test_thunderstorm_wildcard_matches_arbitrary_activity():
+    facts = facts_for_weather_codes([3, 95, 1])
+
+    matched_ids, decision = matching_for(facts, "cycling")
+
+    assert THUNDERSTORM_ID in matched_ids
+    assert decision.primary.sop_id == THUNDERSTORM_ID
+
+
+def test_thunderstorm_sop_does_not_match_without_storm_code():
+    facts = facts_for_weather_codes([0, 1, 2, 3])
+
+    matched_ids, decision = matching_for(facts, "cycling")
+
+    assert THUNDERSTORM_ID not in matched_ids
+    assert decision is None
+
+
+def test_thunderstorm_trigger_reports_max_code_95():
+    facts = facts_for_weather_codes([3, 95])
+
+    matched = match_sops(load_sops("sops"), facts, "picnic", datetime.fromisoformat(facts["now"]))
+    thunderstorm_match = next(item for item in matched if item.sop_id == THUNDERSTORM_ID)
+
+    assert thunderstorm_match.trigger_values[0]["actual"] == 95
+
+
+def test_full_sop_directory_loads_nine_unique_sops():
+    sops = load_sops("sops")
+    ids = [sop.id for sop in sops]
+
+    assert len(sops) == 9
+    assert len(ids) == len(set(ids))
+    assert THUNDERSTORM_ID in ids
+    assert COMPOUND_ID in ids
+
+
+COMPOUND_ID = "compound-severe-weather-001"
+
+
+def facts_for_compound_severe_weather(precipitation_sum, gust_peak):
+    times = [f"2026-11-13T{hour:02}:00" for hour in range(24)]
+    gusts = [10] * 24
+    gusts[12] = gust_peak
+    return {
+        "now": "2026-11-13T12:00",
+        "timezone": "Asia/Kolkata",
+        "utc_offset_seconds": 19800,
+        "grid_latitude": 12.3,
+        "grid_longitude": 45.6,
+        "units": {"current": {}, "hourly": {}, "daily": {}},
+        "current": {},
+        "hourly": {"time": times, "wind_gusts_10m": gusts},
+        "daily": {"time": ["2026-11-13"], "precipitation_sum": [precipitation_sum]},
+    }
+
+
+def test_compound_severe_weather_matches_and_reports_both_actual_values():
+    facts = facts_for_compound_severe_weather(65.0, 45)
+
+    matched = match_sops(load_sops("sops"), facts, "cycling", datetime.fromisoformat(facts["now"]))
+    compound = next(item for item in matched if item.sop_id == COMPOUND_ID)
+
+    assert [trigger["actual"] for trigger in compound.trigger_values] == [65.0, 45]
+
+
+@pytest.mark.parametrize(
+    ("precipitation_sum", "gust_peak", "expected"),
+    [(65.0, 40, True), (64.9, 45, False), (70, 39.9, False)],
+)
+def test_compound_severe_weather_boundaries(precipitation_sum, gust_peak, expected):
+    facts = facts_for_compound_severe_weather(precipitation_sum, gust_peak)
+
+    matched_ids, _ = matching_for(facts, "cycling")
+
+    assert (COMPOUND_ID in matched_ids) is expected
+
+
+def test_compound_severe_weather_requires_both_precipitation_and_gusts():
+    facts = facts_for_compound_severe_weather(70, 30)
+
+    matched_ids, _ = matching_for(facts, "cycling")
+
+    assert COMPOUND_ID not in matched_ids
+
+
+def test_compound_severe_weather_does_not_match_with_low_precipitation():
+    facts = facts_for_compound_severe_weather(10, 45)
+
+    matched_ids, _ = matching_for(facts, "cycling")
+
+    assert COMPOUND_ID not in matched_ids
+
+
+def test_compound_override_precedes_matching_wind_cycling_sop():
+    facts = facts_for_compound_severe_weather(70, 45)
+
+    matched_ids, decision = matching_for(facts, "cycling")
+
+    assert COMPOUND_ID in matched_ids
+    assert "wind-cycling-001" in matched_ids
+    assert decision.primary.sop_id == COMPOUND_ID
+    assert "wind-cycling-001" in decision.also_applies
+
+
+def test_compound_wildcard_matches_and_resolves_for_picnic():
+    facts = facts_for_compound_severe_weather(70, 45)
+
+    matched_ids, decision = matching_for(facts, "picnic")
+
+    assert COMPOUND_ID in matched_ids
+    assert decision.primary.sop_id == COMPOUND_ID
+
+
+def test_compound_severe_weather_missing_precipitation_does_not_match():
+    facts = facts_for_compound_severe_weather(None, 45)
+
+    matched_ids, decision = matching_for(facts, "picnic")
+
+    assert COMPOUND_ID not in matched_ids
+    assert decision is None

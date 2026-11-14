@@ -1,0 +1,29 @@
+id: compound-severe-weather-001
+category: severe
+severity: high
+applies_to:
+  - "*"
+override: true
+conditions:
+  all:
+    - source: daily
+      field: precipitation_sum
+      day: today
+      op: ">="
+      value: 65
+    - source: hourly
+      field: wind_gusts_10m
+      agg: max
+      window:
+        day: today
+        start_hour: 0
+        end_hour: 23
+      op: ">="
+      value: 40
+guidance: >
+  A significant rain system is active today, with daily rainfall at or above
+  IMD's "heavy rainfall" threshold (65mm) combined with wind gusts of 40 km/h
+  or higher. Treat every outdoor activity question as high risk today, lead
+  with this regional weather risk ahead of any activity-specific advice, and
+  recommend postponing outdoor plans where possible. This is based on live
+  numeric forecast data only and does not confirm an official IMD alert.
