@@ -9,7 +9,7 @@ from app.classifier import classifier_facts, outcome_text
 from app.matcher import MatchedSOP, ResolvedDecision, match_sops as matcher_match_sops, resolve
 from app.messages import DEFAULT_MESSAGES_PATH, load_messages
 from app.sop_loader import SOP, all_activity_tags, required_fields
-from app.time_view import resolve_eval_now
+from app.time_view import facts_for_time_ref, resolve_eval_now
 from app.validation import allowed_numbers_for, build_template_reply, validate_reply
 
 
@@ -203,9 +203,11 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
 
     def match_node(state: GraphState) -> dict[str, Any]:
         facts = state["facts"]
+        time_ref = state.get("time_ref")
         real_now = datetime.fromisoformat(facts["now"])
-        eval_now = resolve_eval_now(real_now, state.get("time_ref"))
-        matched = matcher_match_sops(sops, facts, state.get("activity_tag"), eval_now)
+        eval_now = resolve_eval_now(real_now, time_ref)
+        eval_facts = facts_for_time_ref(facts, time_ref)
+        matched = matcher_match_sops(sops, eval_facts, state.get("activity_tag"), eval_now)
         serialized = []
         for item in matched:
             data = _matched_to_dict(item)

@@ -9,6 +9,17 @@ def test_this_evening_moves_time_to_seventeen_on_same_date():
     assert resolve_eval_now(real_now, "this_evening") == datetime.fromisoformat("2026-11-13T17:00:00")
 
 
+def test_this_evening_returns_later_of_real_time_and_seventeen():
+    cases = [
+        ("2026-11-13T10:00:00", "2026-11-13T17:00:00"),
+        ("2026-11-13T17:00:00", "2026-11-13T17:00:00"),
+        ("2026-11-13T20:30:00", "2026-11-13T20:30:00"),
+    ]
+
+    for real_text, expected_text in cases:
+        assert resolve_eval_now(datetime.fromisoformat(real_text), "this_evening") == datetime.fromisoformat(expected_text)
+
+
 def test_tomorrow_moves_to_midnight_on_next_date():
     real_now = datetime.fromisoformat("2026-11-13T22:24:35")
 

@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from dataclasses import fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +59,22 @@ def facts_with(hourly_overrides=None, daily_overrides=None, now=NOW):
         "hourly": hourly,
         "daily": daily,
     }
+
+
+def facts_for_two_days(daily_rain, gusts_today=20, gusts_tomorrow=20, code_today=3, code_tomorrow=3):
+    facts = facts_with(daily_overrides={"precipitation_sum": daily_rain})
+    today = "2026-11-13"
+    tomorrow = "2026-11-14"
+    facts["hourly"]["time"] = [
+        *[f"{today}T{hour:02}:00" for hour in range(24)],
+        *[f"{tomorrow}T{hour:02}:00" for hour in range(24)],
+    ]
+    for field, values in list(facts["hourly"].items()):
+        if field != "time":
+            facts["hourly"][field] = [*values, *values]
+    facts["hourly"]["wind_gusts_10m"] = [gusts_today] * 24 + [gusts_tomorrow] * 24
+    facts["hourly"]["weather_code"] = [code_today] * 24 + [code_tomorrow] * 24
+    return facts
 
 
 def extraction(city="Sample Place", activity="cycling", time_ref=None, is_followup=False):
@@ -321,6 +338,87 @@ def test_time_ref_shifts_matching_but_cites_real_forecast_time():
     assert "Policy: thunderstorm-proxy-001" in result["reply"]
     assert "as of 2026-11-13T10:00" in result["reply"]
     assert "as of 2026-11-13T17:00" not in result["reply"]
+
+
+def test_tomorrow_compound_sop_ignores_todays_rain_without_mutating_facts():
+    facts = facts_for_two_days([70, 0], gusts_today=45, gusts_tomorrow=45)
+    original = deepcopy(facts)
+    deps, _ = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts],
+    )
+    result = invoke(build_graph(SOPS, deps), thread="tomorrow-rain-first")
+
+    assert "compound-severe-weather-001" not in {item["sop_id"] for item in result["matched"]}
+    assert facts == original
+
+
+def test_tomorrow_compound_sop_uses_tomorrows_rain_without_mutating_facts():
+    facts = facts_for_two_days([0, 70], gusts_today=45, gusts_tomorrow=45)
+    original = deepcopy(facts)
+    deps, _ = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts],
+    )
+    result = invoke(build_graph(SOPS, deps), thread="tomorrow-rain-second")
+
+    assert "compound-severe-weather-001" in {item["sop_id"] for item in result["matched"]}
+    assert facts == original
+
+
+def test_tomorrow_hourly_gusts_use_tomorrows_remaining_hours():
+    facts = facts_for_two_days([70, 0], gusts_today=20, gusts_tomorrow=47.5)
+    tomorrow_deps, _ = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts],
+    )
+    tomorrow_result = invoke(build_graph(SOPS, tomorrow_deps), thread="tomorrow-gust-high")
+
+    today_deps, _ = make_deps(
+        extractions=[extraction(time_ref=None)],
+        fact_results=[facts],
+    )
+    today_result = invoke(build_graph(SOPS, today_deps), thread="tomorrow-gust-null")
+
+    tomorrow_ids = {item["sop_id"] for item in tomorrow_result["matched"]}
+    today_ids = {item["sop_id"] for item in today_result["matched"]}
+    assert "wind-cycling-001" in tomorrow_ids
+    assert "wind-cycling-001" not in today_ids
+    assert "compound-severe-weather-001" not in tomorrow_ids
+    assert "compound-severe-weather-001" not in today_ids
+
+
+def test_tomorrow_does_not_match_only_todays_high_gusts():
+    facts = facts_for_two_days([0, 0], gusts_today=47.5, gusts_tomorrow=20)
+    deps, _ = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts],
+    )
+
+    result = invoke(build_graph(SOPS, deps), thread="tomorrow-gust-reverse")
+
+    assert "wind-cycling-001" not in {item["sop_id"] for item in result["matched"]}
+
+
+def test_tomorrow_thunderstorm_uses_only_tomorrows_codes():
+    facts_today_storm = facts_for_two_days([0, 0], code_today=95, code_tomorrow=3)
+    today_storm_deps, _ = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts_today_storm],
+    )
+    today_storm = invoke(build_graph(SOPS, today_storm_deps), thread="tomorrow-storm-today")
+
+    facts_tomorrow_storm = facts_for_two_days([0, 0], code_today=3, code_tomorrow=95)
+    tomorrow_storm_deps, _ = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts_tomorrow_storm],
+    )
+    tomorrow_storm = invoke(build_graph(SOPS, tomorrow_storm_deps), thread="tomorrow-storm-tomorrow")
+
+    today_ids = {item["sop_id"] for item in today_storm["matched"]}
+    tomorrow_ids = {item["sop_id"] for item in tomorrow_storm["matched"]}
+    assert "thunderstorm-proxy-001" not in today_ids
+    assert "thunderstorm-proxy-001" in tomorrow_ids
 
 
 def test_new_thread_without_city_clarifies():
