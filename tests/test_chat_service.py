@@ -1,5 +1,7 @@
 from collections import deque
 
+import pytest
+
 from app.chat_service import ChatService
 from app.sop_loader import load_sops, required_fields
 from app.weather import GeoResult, WeatherResult
@@ -14,6 +16,9 @@ EXPECTED_KEYS = {
     "also_applies",
     "trigger_values",
     "forecast",
+    "evaluated_for",
+    "policies_checked",
+    "no_match_reason",
     "failure_reason",
 }
 
@@ -133,13 +138,77 @@ def test_advice_response_has_structured_decision_and_no_citations_in_body():
 
 
 def test_no_match_response_has_no_sop():
-    service, _calls = make_service(extractions=[{"city": "Sample Place", "activity_tag": "unknown_tag"}])
+    for activity in ("unknown_tag", None):
+        service, _calls = make_service(
+            extractions=[{"city": "Sample Place", "activity_tag": activity}]
+        )
 
-    result = service.ask("thread-1", "Check this activity.")
+        result = service.ask("thread-1", "Check this activity.")
+
+        assert result["reply_kind"] == "no_match"
+        assert result["sop"] is None
+        assert result["also_applies"] == []
+        assert result["no_match_reason"] == "no_policy_covers"
+        assert result["reply_body"] == "We don't have a policy that covers this question."
+
+
+@pytest.mark.parametrize(
+    ("time_ref", "evaluated_for", "when"),
+    [
+        (None, "today", "as of 2026-11-14T10:00"),
+        ("this_evening", "this_evening", "for this evening"),
+        ("tomorrow", "tomorrow", "for tomorrow"),
+    ],
+)
+def test_untriggered_activity_reply_and_panel_include_evaluated_day(time_ref, evaluated_for, when):
+    facts = facts_with_wind(20)
+    today = facts["hourly"]["time"][0][:10]
+    tomorrow = "2026-11-15" if today == "2026-11-14" else "2026-11-14"
+    facts["hourly"]["time"] += [
+        f"{tomorrow}T{hour:02}:00" for hour in range(24)
+    ]
+    for field, values in list(facts["hourly"].items()):
+        if field != "time":
+            facts["hourly"][field] = [*values, *values]
+    facts["hourly"]["wind_gusts_10m"] = [20] * 48
+    service, _calls = make_service(
+        extractions=[
+            {
+                "city": "Sample Place",
+                "activity_tag": "cycling",
+                "time_ref": time_ref,
+            }
+        ],
+        facts=[facts],
+    )
+
+    result = service.ask("thread-no-trigger", "Check cycling.")
 
     assert result["reply_kind"] == "no_match"
-    assert result["sop"] is None
-    assert result["also_applies"] == []
+    assert result["no_match_reason"] == "not_triggered"
+    assert result["evaluated_for"] == evaluated_for
+    assert "cycling policies are triggered" in result["reply_body"]
+    assert "Sample Place, Sample Region, India" in result["reply_body"]
+    assert when in result["reply_body"]
+    assert "not a guarantee of safety" in result["reply_body"]
+    wind_policy = next(
+        policy for policy in result["policies_checked"] if policy["id"] == "wind-cycling-001"
+    )
+    wind_check = next(
+        comparison
+        for comparison in wind_policy["comparisons"]
+        if comparison["field"] == "wind_gusts_10m"
+    )
+    assert {
+        policy["id"] for policy in result["policies_checked"]
+    } >= {
+        "wind-cycling-001",
+        "compound-severe-weather-001",
+        "thunderstorm-proxy-001",
+    }
+    assert wind_policy["severity"] == "high"
+    assert wind_check["actual"] == 20
+    assert wind_check["threshold"] == 40
 
 
 def test_classifier_response_includes_sop_and_all_five_fact_values():
@@ -180,6 +249,26 @@ def test_classifier_retry_then_fail_returns_no_match_without_sop():
 
     assert result["reply_kind"] == "no_match"
     assert result["sop"] is None
+    assert result["no_match_reason"] == "classifier_inconclusive"
+    assert result["policies_checked"] == []
+    assert result["reply_body"] == (
+        "We couldn't produce a verified answer for picnic in Sample Place, Sample Region, India "
+        "as of 2026-11-14T10:00. We have no guidance to give for this right now."
+    )
+    assert "not a guarantee" not in result["reply_body"]
+
+
+def test_valid_picnic_classification_still_returns_classifier_reply():
+    service, _calls = make_service(
+        extractions=[{"city": "Sample Place", "activity_tag": "picnic"}],
+        classify_results=["suitable"],
+    )
+
+    result = service.ask("picnic-thread-valid", "Is a picnic comfortable?")
+
+    assert result["reply_kind"] == "classifier"
+    assert result["sop"]["id"] == "picnic-fuzzy-001"
+    assert result["reply_body"].startswith("Conditions look comfortable for a picnic today.")
 
 
 def test_geocode_failure_returns_fallback_without_forecast():

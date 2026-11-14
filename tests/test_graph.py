@@ -160,6 +160,35 @@ def test_graph_success_composes_and_cites_matching_wind_policy():
     json.dumps(result)
 
 
+def test_compose_input_includes_evaluated_for():
+    facts = facts_for_two_days([0, 0], gusts_today=20, gusts_tomorrow=45)
+    deps, calls = make_deps(
+        extractions=[extraction(time_ref="tomorrow")],
+        fact_results=[facts],
+    )
+
+    result = invoke(build_graph(SOPS, deps), thread="compose-evaluated-for")
+
+    assert result["evaluated_for"] == "tomorrow"
+    assert calls["compose"][0].evaluated_for == "tomorrow"
+    assert ", for tomorrow" in result["reply"]
+
+
+def test_matching_wildcard_policy_still_advises_unknown_activity():
+    facts = facts_with({"weather_code": {15: 95}})
+    deps, _ = make_deps(
+        extractions=[extraction(activity="unlisted_activity")],
+        fact_results=[facts],
+        compose_fn=lambda _compose_input: "A storm code is present in the forecast; avoid outdoor plans.",
+    )
+
+    result = invoke(build_graph(SOPS, deps), thread="wildcard-unknown-activity")
+
+    assert "thunderstorm-proxy-001" in {item["sop_id"] for item in result["matched"]}
+    assert result["cited_sop_ids"][0] == "thunderstorm-proxy-001"
+    assert result["reply_kind"] == "advice"
+
+
 def test_finalize_stores_uncited_reply_body_for_advice_and_no_match():
     wind_facts = facts_with({"wind_gusts_10m": {15: 45}})
     advice_deps, _ = make_deps(fact_results=[wind_facts])

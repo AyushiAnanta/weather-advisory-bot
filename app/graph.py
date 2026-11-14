@@ -6,7 +6,13 @@ import yaml
 from langgraph.graph import END, START, StateGraph
 
 from app.classifier import classifier_facts, outcome_text
-from app.matcher import MatchedSOP, ResolvedDecision, match_sops as matcher_match_sops, resolve
+from app.matcher import (
+    MatchedSOP,
+    ResolvedDecision,
+    evaluate_condition,
+    match_sops as matcher_match_sops,
+    resolve,
+)
 from app.messages import DEFAULT_MESSAGES_PATH, load_messages
 from app.sop_loader import SOP, all_activity_tags, required_fields
 from app.time_view import facts_for_time_ref, resolve_eval_now
@@ -30,6 +36,7 @@ class ComposeInput:
     also_applies: list[str]
     trigger_values: list[dict[str, Any]]
     location_display: str
+    evaluated_for: str
     previous_decision: PreviousDecisionSummary | None
 
 
@@ -45,6 +52,9 @@ class GraphState(TypedDict, total=False):
     matched: list[dict[str, Any]]
     decision: dict[str, Any] | None
     trigger_values: list[dict[str, Any]]
+    evaluated_for: str
+    no_match_reason: str | None
+    policies_checked: list[dict[str, Any]]
     failure_reason: str | None
     reply: str
     reply_body: str
@@ -112,6 +122,8 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
     with DEFAULT_MESSAGES_PATH.open(encoding="utf-8") as message_file:
         configured_messages = yaml.safe_load(message_file)
     messages["llm_unavailable"] = configured_messages["llm_unavailable"]
+    messages["no_policy_covers"] = configured_messages["no_policy_covers"]
+    messages["not_triggered"] = configured_messages["not_triggered"]
     classifiers_by_id = {sop.id: sop for sop in sops if sop.kind == "classifier"}
 
     def begin_turn(state: GraphState) -> dict[str, Any]:
@@ -131,6 +143,9 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             "location": None,
             "facts": None,
             "classifier_sop_id": None,
+            "evaluated_for": "today",
+            "no_match_reason": None,
+            "policies_checked": [],
         }
 
     def understand_node(state: GraphState) -> dict[str, Any]:
@@ -153,11 +168,14 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
 
     def merge_context(state: GraphState) -> dict[str, Any]:
         extracted = state.get("extracted") or {}
-        # time_ref is retained for the next stage; applied in 5B.
+        time_ref = extracted.get("time_ref")
+        evaluated_for = time_ref if time_ref in {"this_evening", "tomorrow"} else "today"
+        # Keep the extracted reference for matching and response wording.
         return {
             "city_text": extracted.get("city") or state.get("last_city_text"),
             "activity_tag": extracted.get("activity_tag") or state.get("last_activity_tag"),
-            "time_ref": extracted.get("time_ref"),
+            "time_ref": time_ref,
+            "evaluated_for": evaluated_for,
             "is_followup": bool(extracted.get("is_followup", False)),
         }
 
@@ -292,7 +310,79 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
         return "finalize" if state.get("reply_kind") == "classifier" else "no_match"
 
     def no_match(state: GraphState) -> dict[str, Any]:
-        return {"reply": messages["no_match"], "reply_kind": "no_match"}
+        activity_tag = state.get("activity_tag")
+        evaluated_for = state.get("evaluated_for", "today")
+        facts = state.get("facts") or {}
+        if evaluated_for == "this_evening":
+            when = "for this evening"
+        elif evaluated_for == "tomorrow":
+            when = "for tomorrow"
+        else:
+            when = f"as of {facts['now']}"
+
+        if (
+            state.get("classifier_sop_id") is not None
+            and state.get("reply_kind") == "classify_failed"
+        ):
+            with DEFAULT_MESSAGES_PATH.open(encoding="utf-8") as message_file:
+                classifier_message = yaml.safe_load(message_file)["classifier_inconclusive"]
+            return {
+                "reply": classifier_message.format(
+                    activity=activity_tag,
+                    place=state["location"]["display"],
+                    when=when,
+                ),
+                "reply_kind": "no_match",
+                "no_match_reason": "classifier_inconclusive",
+                "policies_checked": [],
+            }
+
+        if activity_tag is None or not any(activity_tag in sop.applies_to for sop in sops):
+            return {
+                "reply": messages["no_policy_covers"],
+                "reply_kind": "no_match",
+                "no_match_reason": "no_policy_covers",
+                "policies_checked": [],
+            }
+
+        time_ref = state.get("time_ref")
+        real_now = datetime.fromisoformat(facts["now"])
+        eval_now = resolve_eval_now(real_now, time_ref)
+        eval_facts = facts_for_time_ref(facts, time_ref)
+        policies_checked: list[dict[str, Any]] = []
+        for sop in sops:
+            if sop.kind != "rules" or not (
+                activity_tag in sop.applies_to or "*" in sop.applies_to
+            ):
+                continue
+            sop_conditions = (sop.conditions.all or []) + (sop.conditions.any or [])
+            comparisons = []
+            for condition in sop_conditions:
+                _matched, actual = evaluate_condition(condition, eval_facts, eval_now)
+                comparisons.append(
+                    {
+                        "source": condition.source,
+                        "field": condition.field,
+                        "op": condition.op,
+                        "actual": actual,
+                        "threshold": condition.value,
+                    }
+                )
+            policies_checked.append(
+                {"id": sop.id, "severity": sop.severity, "comparisons": comparisons}
+            )
+
+        reply = messages["not_triggered"].format(
+            activity=activity_tag,
+            place=state["location"]["display"],
+            when=when,
+        )
+        return {
+            "reply": reply,
+            "reply_kind": "no_match",
+            "no_match_reason": "not_triggered",
+            "policies_checked": policies_checked,
+        }
 
     def compose_node(state: GraphState) -> dict[str, Any]:
         decision = state["decision"]
@@ -306,6 +396,7 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             also_applies=list(decision["also_applies"]),
             trigger_values=list(state.get("trigger_values", [])),
             location_display=state["location"]["display"],
+            evaluated_for=state.get("evaluated_for", "today"),
             previous_decision=previous,
         )
         try:
@@ -333,6 +424,12 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
         reply = state.get("reply", "")
         reply_body = reply
         kind = state.get("reply_kind")
+        evaluated_for = state.get("evaluated_for", "today")
+        evaluated_label = {
+            "today": "today",
+            "this_evening": "this evening",
+            "tomorrow": "tomorrow",
+        }.get(evaluated_for, "today")
         decision = state.get("decision")
         location = state.get("location")
         facts = state.get("facts")
@@ -345,7 +442,7 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             if decision["also_applies"]:
                 lines.append("Also applies: " + ", ".join(decision["also_applies"]))
             lines.append(
-                f"Forecast: {location['display']}, as of {facts['now']} ({facts.get('timezone')})"
+                f"Forecast: {location['display']}, as of {facts['now']} ({facts.get('timezone')}), for {evaluated_label}"
             )
             reply = reply.rstrip() + "\n\n" + "\n".join(lines)
             last_decision = {
@@ -359,7 +456,7 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             sop = classifiers_by_id[citation_ids[0]]
             lines = [f"Policy: {sop.id} ({sop.severity})"]
             lines.append(
-                f"Forecast: {location['display']}, as of {facts['now']} ({facts.get('timezone')})"
+                f"Forecast: {location['display']}, as of {facts['now']} ({facts.get('timezone')}), for {evaluated_label}"
             )
             reply = reply.rstrip() + "\n\n" + "\n".join(lines)
             last_decision = {

@@ -104,7 +104,16 @@ for index, item in enumerate(st.session_state.messages):
             if sop is not None:
                 st.write(f"Policy: {sop['id']} ({sop['severity']}, {sop['category']})")
             elif result["reply_kind"] == "no_match":
-                st.write("No policy applies to this question")
+                if result.get("no_match_reason") == "no_policy_covers":
+                    st.write("No policy covers this question.")
+                elif result.get("no_match_reason") == "classifier_inconclusive":
+                    st.write("The classification step could not give a verified answer.")
+                elif result.get("no_match_reason") == "not_triggered":
+                    st.write("Policies checked:")
+                    for policy in result["policies_checked"]:
+                        st.write(f"{policy['id']} ({policy['severity']})")
+                        if policy["comparisons"]:
+                            st.table(policy["comparisons"])
             elif result["reply_kind"] == "clarify":
                 st.write(panel_messages["why_clarify"])
             elif result["reply_kind"] == "error":
@@ -115,6 +124,13 @@ for index, item in enumerate(st.session_state.messages):
                 st.write(result["failure_reason"] or "Weather lookup unavailable")
             else:
                 st.write(result["failure_reason"] or result["reply_kind"])
+
+            evaluated_label = {
+                "today": "today",
+                "this_evening": "this evening",
+                "tomorrow": "tomorrow",
+            }.get(result.get("evaluated_for"), "today")
+            st.write(f"Evaluated for: {evaluated_label}")
 
             if result["trigger_values"]:
                 st.table(result["trigger_values"])

@@ -39,6 +39,7 @@ def compose_input():
         also_applies=[],
         trigger_values=[{"field": "wind_gusts_10m", "agg": "max", "actual": 45}],
         location_display="Sample Place, Sample Region, India",
+        evaluated_for="today",
         previous_decision=None,
     )
 
@@ -143,8 +144,12 @@ def test_real_compose_returns_text_without_user_message_field(monkeypatch):
     assert result == "Use care based on the forecast."
     assert requests[0]["temperature"] == 0
     assert not any("message" in name or "history" in name for name in fields)
-    assert "Write 2-4 sentences" in requests[0]["messages"][0]["content"]
-    assert "never invent numbers" in requests[0]["messages"][0]["content"].lower()
+    system_prompt = requests[0]["messages"][0]["content"]
+    assert "Write 2-4 sentences" in system_prompt
+    assert "never invent numbers" in system_prompt.lower()
+    assert "forecast value" in system_prompt
+    assert "have reached" in system_prompt
+    assert '"evaluated_for": "today"' in requests[0]["messages"][1]["content"]
     assert "Sample Place" in requests[0]["messages"][1]["content"]
 
 

@@ -66,6 +66,9 @@ class ChatService:
         also_applies: list[str] | None = None,
         trigger_values: list[dict[str, Any]] | None = None,
         forecast: dict[str, Any] | None = None,
+        evaluated_for: str = "today",
+        policies_checked: list[dict[str, Any]] | None = None,
+        no_match_reason: str | None = None,
     ) -> dict[str, Any]:
         return {
             "thread_id": thread_id,
@@ -75,6 +78,9 @@ class ChatService:
             "also_applies": also_applies or [],
             "trigger_values": trigger_values or [],
             "forecast": forecast,
+            "evaluated_for": evaluated_for,
+            "policies_checked": policies_checked or [],
+            "no_match_reason": no_match_reason,
             "failure_reason": failure_reason,
         }
 
@@ -150,6 +156,9 @@ class ChatService:
                 also_applies=decision.get("also_applies", []),
                 trigger_values=trigger_values,
                 forecast=forecast,
+                evaluated_for=state.get("evaluated_for", "today"),
+                policies_checked=state.get("policies_checked", []),
+                no_match_reason=state.get("no_match_reason"),
             )
         except Exception as exc:
             print(f"Chat graph exception: {exc}", file=sys.stderr)
