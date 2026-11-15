@@ -30,6 +30,7 @@ from app.weather import GeoResult, WeatherResult, fetch_weather as real_fetch_we
 EVALS_DIR = Path(__file__).resolve().parent
 FIXTURE_DIR = EVALS_DIR / "fixtures"
 RESULTS_PATH = EVALS_DIR / "RESULTS.md"
+LIVE_CITIES_PATH = EVALS_DIR / "live_cities.yaml"
 FIXED_NOW = "2026-11-14T12:00"
 
 
@@ -132,6 +133,196 @@ def primary_id(result: dict[str, Any]) -> str | None:
     decision = result.get("decision") or {}
     primary = decision.get("primary") or {}
     return primary.get("sop_id")
+
+
+def remaining_max(facts: dict[str, Any], field: str) -> int | float | None:
+    now = datetime.fromisoformat(facts["now"])
+    hourly = facts.get("hourly", {})
+    times = hourly.get("time", [])
+    values = hourly.get(field, [])
+    selected: list[int | float] = []
+    for timestamp, value in zip(times, values):
+        if value is None:
+            continue
+        try:
+            parsed = datetime.fromisoformat(timestamp)
+        except (TypeError, ValueError):
+            continue
+        if parsed.date() == now.date() and parsed.hour >= now.hour:
+            selected.append(value)
+    return max(selected) if selected else None
+
+
+def rank_by_remaining_max(results: dict[str, dict[str, Any]], field: str) -> str | None:
+    ranked = [
+        (city, value)
+        for city, facts in results.items()
+        if (value := remaining_max(facts, field)) is not None
+    ]
+    return min(ranked, key=lambda item: (-item[1], item[0]))[0] if ranked else None
+
+
+def cycling_threshold(directory: str | Path = ROOT / "sops") -> int | float:
+    sops = load_sops(directory)
+    sop = next((item for item in sops if item.id == "wind-cycling-001"), None)
+    if sop is None:
+        raise ValueError(f"SOP 'wind-cycling-001' was not found in {directory}")
+    if sop.conditions is not None:
+        conditions = (sop.conditions.all or []) + (sop.conditions.any or [])
+        condition = next((item for item in conditions if item.source == "hourly"), None)
+        if condition is not None:
+            return condition.value
+    raise ValueError("SOP 'wind-cycling-001' has no hourly condition")
+
+
+def cycling_branch_result(
+    gust: int | float | None,
+    threshold: int | float,
+    primary_sop_id: str | None,
+    also_applies: list[str],
+    reply_kind: str,
+    no_match_reason: str | None,
+) -> tuple[bool, str]:
+    cited = primary_sop_id == "wind-cycling-001" or "wind-cycling-001" in also_applies
+    if gust is None:
+        return False, "no remaining gust value"
+    if gust >= threshold:
+        if not cited:
+            return False, "triggered gusts but wind-cycling-001 was not cited"
+        return True, "triggered gust condition is cited"
+    if cited:
+        return False, "sub-threshold gusts but wind-cycling-001 was cited"
+    if reply_kind != "no_match":
+        return False, "sub-threshold gusts did not return no_match"
+    if no_match_reason != "not_triggered":
+        return False, "sub-threshold gusts did not use the not_triggered path"
+    return True, "sub-threshold gusts used the not_triggered path"
+
+
+def _grounded_reply_numbers(result: dict[str, Any], sops_by_id: dict[str, SOP]) -> tuple[bool, list[str]]:
+    decision = result.get("decision") or {}
+    location = (result.get("location") or {}).get("display", "")
+    cited_ids = result.get("cited_sop_ids", [])
+    triggers = [
+        trigger
+        for matched in result.get("matched", [])
+        if matched.get("sop_id") in cited_ids
+        for trigger in matched.get("trigger_values", [])
+    ]
+    if not triggers:
+        triggers = result.get("trigger_values", [])
+    allowed: set[float] = set()
+    if decision.get("primary"):
+        allowed.update(allowed_numbers_for(decision, triggers, location))
+
+    facts = result.get("facts") or {}
+    forecast_line = (
+        f"Forecast: {location}, as of {facts.get('now', '')} ({facts.get('timezone', '')})"
+    )
+    allowed.update(extract_numbers(forecast_line))
+    return validate_reply(result.get("reply_body", ""), allowed, cited_ids)
+
+
+def live_cycling_check(
+    result: dict[str, Any], case: dict[str, Any], sops_by_id: dict[str, SOP]
+) -> tuple[bool, str]:
+    facts = result.get("facts") or {}
+    gust = remaining_max(facts, "wind_gusts_10m") if facts else None
+    threshold = cycling_threshold()
+    decision = result.get("decision") or {}
+    primary = primary_id(result)
+    secondary = decision.get("also_applies", [])
+    kind = result.get("reply_kind")
+    allowed_kind = kind in {"advice", "template", "no_match"}
+    branch_passed, branch_detail = cycling_branch_result(
+        gust,
+        threshold,
+        primary,
+        secondary,
+        kind,
+        result.get("no_match_reason"),
+    )
+
+    actual = None
+    if gust is not None and gust >= threshold:
+        for item in result.get("matched", []):
+            if item.get("sop_id") == "wind-cycling-001":
+                actual = next(
+                    (
+                        trigger.get("actual")
+                        for trigger in item.get("trigger_values", [])
+                        if trigger.get("field") == "wind_gusts_10m"
+                    ),
+                    None,
+                )
+                break
+    else:
+        for policy in result.get("policies_checked", []):
+            if policy.get("id") == "wind-cycling-001":
+                actual = next(
+                    (
+                        comparison.get("actual")
+                        for comparison in policy.get("comparisons", [])
+                        if comparison.get("field") == "wind_gusts_10m"
+                    ),
+                    None,
+                )
+                break
+    actual_ok = actual == gust
+    number_ok, number_reasons = _grounded_reply_numbers(result, sops_by_id)
+    place = (result.get("location") or {}).get("display", "")
+    branch = "LIVE-TRIGGERED" if gust is not None and gust >= threshold else "LIVE-NOT-TRIGGERED"
+    passed = allowed_kind and branch_passed and actual_ok and number_ok
+    detail = (
+        f"city={case.get('chosen_city', case.get('city', 'unknown'))}, g={gust}, t={threshold}, "
+        f"branch={branch}, kind={kind}, primary={primary}, also_applies={secondary}, "
+        f"wind_actual={actual}, place={place!r}, branch_check={branch_detail}, "
+        f"number_check={'passed' if number_ok else number_reasons}"
+    )
+    return passed, detail
+
+
+def bhopal_bike_check(
+    result: dict[str, Any], case: dict[str, Any], sops_by_id: dict[str, SOP]
+) -> tuple[bool, str]:
+    passed, detail = live_cycling_check(result, case, sops_by_id)
+    place = (result.get("location") or {}).get("display", "")
+    extracted_activity = result.get("activity_tag")
+    activity_ok = extracted_activity == "cycling"
+    place_ok = "Bhopal" in place and "Madhya Pradesh" in place and place in result.get("reply", "")
+    return (
+        passed and activity_ok and place_ok,
+        f"{detail}, activity_tag={extracted_activity}, place_check={place_ok}",
+    )
+
+
+def scan_windiest_city(
+    cities: list[str], fields: dict[str, list[str]]
+) -> tuple[str | None, dict[str, dict[str, Any]], list[str]]:
+    city_facts: dict[str, dict[str, Any]] = {}
+    failures: list[str] = []
+    for city in cities:
+        try:
+            location = geocode(city)
+        except Exception as exc:
+            failures.append(f"{city}: geocode failed ({exc})")
+            continue
+        if not location.ok:
+            failures.append(f"{city}: geocode failed ({location.reason})")
+            continue
+        try:
+            weather = real_fetch_weather(location.latitude, location.longitude, fields)
+        except Exception as exc:
+            failures.append(f"{city}: weather fetch failed ({exc})")
+            continue
+        if not weather.ok or not weather.facts:
+            failures.append(f"{city}: weather fetch failed ({weather.reason})")
+            continue
+        if remaining_max(weather.facts, "wind_gusts_10m") is None:
+            failures.append(f"{city}: no remaining wind_gusts_10m values")
+            continue
+        city_facts[city] = weather.facts
+    return rank_by_remaining_max(city_facts, "wind_gusts_10m"), city_facts, failures
 
 
 def numbers_allowed_by_sop_and_triggers(result: dict[str, Any], sops_by_id: dict[str, SOP]) -> set[float]:
@@ -656,6 +847,27 @@ def main() -> None:
             "notes_suffix": "Wettest available; the graph performs a second live fetch that may differ slightly from the scan; this proves grounding, not severity.",
         },
         {
+            "id": "severe-live-windiest-city",
+            "what_it_checks": "Whether the cycling gust rule follows the highest remaining gust in a live city scan",
+            "pass_criteria": "The graph's own fetched gust determines the wind SOP branch, and reply numbers pass app.validation checks.",
+            "mode": "LIVE-WEATHER+live-LLM",
+            "messages": [],
+            "fixture": {"live_windiest": True},
+            "check": live_cycling_check,
+            "real_weather": True,
+            "notes_suffix": "A not-triggered day proves grounding and the no-match path only.",
+        },
+        {
+            "id": "bhopal-bike-ride-live",
+            "what_it_checks": "Paraphrased bike-ride extraction and wind grounding for Bhopal",
+            "pass_criteria": "The live gust branch passes, activity_tag is cycling, and the forecast location says Bhopal, Madhya Pradesh.",
+            "mode": "LIVE-WEATHER+live-LLM",
+            "messages": ["is it safe to go for a bike ride in Bhopal today?"],
+            "fixture": {"live_bhopal": True},
+            "check": bhopal_bike_check,
+            "real_weather": True,
+        },
+        {
             "id": "severe-recorded-kl",
             "what_it_checks": "Thunderstorm rule using a Kuala Lumpur recording attached to an Indian place",
             "pass_criteria": "Thunderstorm SOP is primary and its trigger actual is a weather code present in the recording.",
@@ -722,6 +934,24 @@ def main() -> None:
             else:
                 case["chosen_city"], case["precipitation_sum"] = wettest
                 case["messages"] = [f"Is it safe to cycle in {case['chosen_city']} today?"]
+        elif case["id"] == "severe-live-windiest-city":
+            cities = yaml.safe_load(LIVE_CITIES_PATH.read_text(encoding="utf-8"))
+            city, scanned_facts, scan_failures = scan_windiest_city(cities, fields)
+            for failure in scan_failures:
+                print(f"severe-live-windiest-city skipped scan: {failure}")
+            case["scan_failures"] = scan_failures
+            if city is None:
+                case["skip_reason"] = "SKIPPED (no live weather)"
+                case["notes_suffix"] += f" Scan failures: {scan_failures or 'no usable gust data'}"
+                print(f"severe-live-windiest-city: {case['skip_reason']}")
+            else:
+                case["chosen_city"] = city
+                case["messages"] = [f"Is it safe to go cycling in {city} today?"]
+                case["notes_suffix"] += f" Scan failures: {scan_failures or 'none'}"
+                scan_gust = remaining_max(scanned_facts[city], "wind_gusts_10m")
+                print(f"severe-live-windiest-city selected {city}, scan remaining gust={scan_gust}")
+        elif case["id"] == "bhopal-bike-ride-live":
+            case["city"] = "Bhopal"
         elif case["id"] == "severe-recorded-kl":
             fixture, filled_fields, fixture_codes = read_recorded_kl(fields)
             case["runtime_fixture"] = fixture
@@ -837,9 +1067,22 @@ def main() -> None:
                 result = results[-1]
             except AssertionError as exc:
                 result = {"reply_kind": "exception", "reply": str(exc), "reply_body": str(exc), "cited_sop_ids": []}
+            except Exception as exc:
+                if case["id"] not in {"severe-live-windiest-city", "bhopal-bike-ride-live"}:
+                    raise
+                result = {
+                    "reply_kind": "exception",
+                    "reply": str(exc),
+                    "reply_body": str(exc),
+                    "cited_sop_ids": [],
+                }
             result["_eval_fetch_called"] = fetch_called
             result["_eval_classify_inputs"] = classify_inputs
             passed, detail = case["check"](result, case, sops_by_id)
+            if case["id"] in {"severe-live-windiest-city", "bhopal-bike-ride-live"}:
+                print(f"{case['id']} run {run_number}: {detail}")
+                print("reply body:")
+                print(result.get("reply_body", ""))
             notes.append(f"run {run_number}: {detail}")
             if passed:
                 passed_count += 1
