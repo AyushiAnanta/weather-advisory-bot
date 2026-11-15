@@ -1,0 +1,27 @@
+id: wind-outdoor-activity-001
+category: exercise
+severity: medium
+applies_to:
+  - running
+  - outdoor_exercise
+  - pet_walk
+  - child_outdoor_play
+  - elderly
+override: false
+conditions:
+  all:
+    - source: hourly
+      field: wind_gusts_10m
+      agg: max
+      window:
+        day: today
+        start_hour: 0
+        end_hour: 23
+      op: ">="
+      value: 40
+guidance: >
+  Wind gusts of 40 km/h or higher are forecast today. This can make
+  outdoor activity uncomfortable or risky, though the specific
+  two-wheeler instability risk covered for cycling does not apply here.
+  Recommend caution, especially for more exposed or less stable
+  activities, and consider rescheduling if conditions worsen.

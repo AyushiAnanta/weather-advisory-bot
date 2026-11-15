@@ -1,10 +1,12 @@
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 import yaml
 
 from app.chat_service import ChatService, format_comparison
+from app.matcher import evaluate_condition, sop_matches
 from app.sop_loader import load_sops, required_fields
 from app.weather import GeoResult, WeatherResult
 
@@ -273,7 +275,8 @@ def test_advice_response_has_structured_decision_and_no_citations_in_body():
 def test_no_match_response_has_no_sop():
     for activity in ("unknown_tag", None):
         service, _calls = make_service(
-            extractions=[{"city": "Sample Place", "activity_tag": activity}]
+            extractions=[{"city": "Sample Place", "activity_tag": activity}],
+            facts=[facts_with_wind(10)],
         )
 
         result = service.ask("thread-1", "Check this activity.")
@@ -350,7 +353,7 @@ def test_untriggered_activity_reply_and_panel_include_evaluated_day(time_ref, ev
     assert wind_check["threshold"] == 40
 
 
-def test_not_triggered_panel_shows_each_compound_condition_result():
+def test_wind_advice_keeps_compound_conditions_separate_from_regional_watch():
     facts = facts_with_wind(45)
     service, _calls = make_service(
         extractions=[{"city": "Sample Place", "activity_tag": "running"}],
@@ -359,23 +362,22 @@ def test_not_triggered_panel_shows_each_compound_condition_result():
 
     result = service.ask("running-compound-thread", "Check running.")
 
-    assert result["reply_kind"] == "no_match"
-    assert result["no_match_reason"] == "not_triggered"
-    compound = next(
-        policy
-        for policy in result["policies_checked"]
-        if policy["id"] == "compound-severe-weather-001"
-    )
-    rain = next(
-        item for item in compound["comparisons"] if item["field"] == "precipitation_sum"
-    )
-    gust = next(
-        item for item in compound["comparisons"] if item["field"] == "wind_gusts_10m"
-    )
-    assert rain["met"] is False
-    assert "-> not met" in rain["display"]
-    assert gust["met"] is True
-    assert gust["display"] == "max wind_gusts_10m: 45 >= 40 -> met"
+    assert result["reply_kind"] == "advice"
+    assert result["sop"]["id"] == "wind-outdoor-activity-001"
+    assert "regional-weather-watch-001" in result["also_applies"]
+    cited_ids = {result["sop"]["id"], *result["also_applies"]}
+    assert "compound-severe-weather-001" not in cited_ids
+
+    compound = next(sop for sop in service.sops if sop.id == "compound-severe-weather-001")
+    rain_condition, gust_condition = compound.conditions.all
+    now = datetime.fromisoformat(facts["now"])
+    rain_matched, rain_actual = evaluate_condition(rain_condition, facts, now)
+    gust_matched, gust_actual = evaluate_condition(gust_condition, facts, now)
+    compound_matched, _triggers = sop_matches(compound, facts, now)
+
+    assert (rain_matched, rain_actual) == (False, 0)
+    assert (gust_matched, gust_actual) == (True, 45)
+    assert compound_matched is False
 
 
 def test_running_at_1245_shows_cold_morning_window_already_passed():
@@ -434,6 +436,7 @@ def test_classifier_retry_then_fail_returns_no_match_without_sop():
     service, _calls = make_service(
         extractions=[{"city": "Sample Place", "activity_tag": "picnic"}],
         classify_results=["excellent", "excellent"],
+        facts=[facts_with_wind(10)],
     )
 
     result = service.ask("picnic-thread", "Is a picnic comfortable?")
@@ -465,6 +468,7 @@ def test_valid_picnic_classification_still_returns_classifier_reply():
     service, _calls = make_service(
         extractions=[{"city": "Sample Place", "activity_tag": "picnic"}],
         classify_results=["suitable"],
+        facts=[facts_with_wind(10)],
     )
 
     result = service.ask("picnic-thread-valid", "Is a picnic comfortable?")

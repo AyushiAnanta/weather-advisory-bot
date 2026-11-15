@@ -1,0 +1,29 @@
+id: regional-weather-watch-001
+category: severe
+severity: medium
+applies_to:
+  - "*"
+override: false
+conditions:
+  any:
+    - source: daily
+      field: precipitation_sum
+      day: today
+      op: ">="
+      value: 65
+    - source: hourly
+      field: wind_gusts_10m
+      agg: max
+      window:
+        day: today
+        start_hour: 0
+        end_hour: 23
+      op: ">="
+      value: 40
+guidance: >
+  Either heavy daily rainfall (65mm or more) or strong wind gusts (40
+  km/h or more) are present today, on their own. This is a milder,
+  single-signal advisory, not a confirmed severe regional event --
+  see compound-severe-weather-001 for the stricter combined-signal
+  warning. Recommend caution for outdoor plans today and checking for
+  local updates.

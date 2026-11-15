@@ -61,7 +61,7 @@ def make_fixture(
         for field, value in (
             ("precipitation_probability", 90),
             ("temperature_2m", 41),
-            ("wind_gusts_10m", 60),
+            ("wind_gusts_10m", 35),
             ("uv_index", 11),
         ):
             if field in hourly:
@@ -104,6 +104,7 @@ def write_fixtures(fields: dict[str, list[str]]) -> None:
         "uv_9_noon.json": {"uv_peak": 9},
         "weather_code_95.json": {"weather_code_peak": 95},
         "picnic_bad.json": {"picnic_bad": True},
+        "picnic_bad_windy.json": {"picnic_bad": True, "gust_peak": 60},
         "severe_synthetic_heavy_rain.json": {"gust_peak": 45, "weather_code_peak": 63, "daily_rain": 90},
     }
     for filename, overrides in fixture_specs.items():
@@ -478,6 +479,20 @@ def classifier_unsuitable_outcome_check(result: dict[str, Any], _case: dict[str,
     return passed, f"kind={result.get('reply_kind')}, exact_unsuitable={result.get('reply_body') == expected}"
 
 
+def picnic_windy_regional_precedence_check(
+    result: dict[str, Any], _case: dict[str, Any], _sops_by_id: dict[str, SOP]
+) -> tuple[bool, str]:
+    passed = (
+        result.get("reply_kind") == "advice"
+        and primary_id(result) == "regional-weather-watch-001"
+        and result.get("_eval_classifier_calls") == 0
+    )
+    return passed, (
+        f"kind={result.get('reply_kind')}, primary={primary_id(result)}, "
+        f"classifier_calls={result.get('_eval_classifier_calls')}"
+    )
+
+
 def read_recorded_kl(fields: dict[str, list[str]]) -> tuple[dict[str, Any], list[str], list[int]]:
     raw = json.loads((ROOT / "tests" / "fixtures" / "kl_thunderstorm_partial.json").read_text(encoding="utf-8"))["data"]
     now = "2026-11-13T02:00"
@@ -836,6 +851,17 @@ def main() -> None:
             "check": classifier_unsuitable_outcome_check,
         },
         {
+            "id": "picnic-windy-regional-precedence",
+            "what_it_checks": "Windy picnic facts resolve to a regional advisory before the picnic classifier",
+            "pass_criteria": "Reply is advice with regional-weather-watch-001 primary and the classifier is not run.",
+            "mode": "synthetic-weather+live-LLM",
+            "messages": ["Is a picnic OK in Kolkata today?"],
+            "fixture": "picnic_bad_windy.json",
+            "check": picnic_windy_regional_precedence_check,
+            "track_classifier": True,
+            "notes_suffix": "A medium wildcard advisory outranks the info-level picnic classifier.",
+        },
+        {
             "id": "severe-live-wettest",
             "what_it_checks": "Grounding for the wettest available live city; second fetch can differ slightly from scan, tests grounding rather than severity",
             "pass_criteria": "Reply is advice or not-triggered no-match, names the resolved place, and advice numbers come from matched SOPs or trigger facts.",
@@ -993,6 +1019,7 @@ def main() -> None:
         for run_number in range(1, 4):
             fetch_called = False
             classify_inputs: list[dict[str, Any]] = []
+            classify_calls: list[dict[str, Any]] = []
 
             def fetch_weather(_lat: float, _lon: float, _requested_fields: dict[str, list[str]], *, _fixture=fixture, _case=case):
                 nonlocal fetch_called
@@ -1023,6 +1050,14 @@ def main() -> None:
                     latitude=22.5726, longitude=88.3639, timezone="Asia/Kolkata",
                     display="Kolkata, West Bengal, India",
                 )
+            if case.get("track_classifier"):
+                original_classify = classify
+
+                def tracked_classify(classify_input, *, _original=original_classify):
+                    classify_calls.append(classify_input)
+                    return _original(classify_input)
+
+                classify = tracked_classify
             if case.get("mock_recorded_kl") or case.get("mock_cycle"):
                 place = "Bhopal"
                 understand = lambda _message, _tags, _summary: {
@@ -1078,6 +1113,7 @@ def main() -> None:
                 }
             result["_eval_fetch_called"] = fetch_called
             result["_eval_classify_inputs"] = classify_inputs
+            result["_eval_classifier_calls"] = len(classify_calls)
             passed, detail = case["check"](result, case, sops_by_id)
             if case["id"] in {"severe-live-windiest-city", "bhopal-bike-ride-live"}:
                 print(f"{case['id']} run {run_number}: {detail}")

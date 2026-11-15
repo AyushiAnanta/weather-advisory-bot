@@ -431,10 +431,135 @@ def test_compound_wildcard_matches_and_resolves_for_picnic():
     assert decision.primary.sop_id == COMPOUND_ID
 
 
-def test_compound_severe_weather_missing_precipitation_does_not_match():
+def test_compound_severe_weather_missing_precipitation_falls_to_regional_advisory():
     facts = facts_for_compound_severe_weather(None, 45)
 
     matched_ids, decision = matching_for(facts, "picnic")
 
     assert COMPOUND_ID not in matched_ids
-    assert decision is None
+    assert decision is not None
+    assert decision.primary.sop_id == REGIONAL_WATCH_ID
+    assert COMPOUND_ID not in decision.also_applies
+
+
+REGIONAL_WATCH_ID = "regional-weather-watch-001"
+OUTDOOR_WIND_ID = "wind-outdoor-activity-001"
+
+
+def facts_for_regional_weather_watch(precipitation_sum, gust_peak):
+    times = [f"2026-11-13T{hour:02}:00" for hour in range(24)]
+    gusts = [10] * 24
+    gusts[15] = gust_peak
+    return {
+        "now": "2026-11-13T12:00",
+        "timezone": "Asia/Kolkata",
+        "utc_offset_seconds": 19800,
+        "grid_latitude": 12.3,
+        "grid_longitude": 45.6,
+        "units": {"current": {}, "hourly": {}, "daily": {}},
+        "current": {},
+        "hourly": {"time": times, "wind_gusts_10m": gusts},
+        "daily": {"time": ["2026-11-13"], "precipitation_sum": [precipitation_sum]},
+    }
+
+
+def test_regional_watch_matches_bhopal_shaped_high_wind_low_rain_case():
+    facts = facts_for_regional_weather_watch(6.9, 45.7)
+
+    matched_ids, _decision = matching_for(facts, "cycling")
+
+    assert REGIONAL_WATCH_ID in matched_ids
+    assert COMPOUND_ID not in matched_ids
+
+
+def test_regional_watch_matches_when_daily_rain_alone_clears_threshold():
+    facts = facts_for_regional_weather_watch(70, 10)
+
+    matched_ids, _decision = matching_for(facts, "cycling")
+
+    assert REGIONAL_WATCH_ID in matched_ids
+    assert COMPOUND_ID not in matched_ids
+
+
+def test_regional_watch_does_not_match_when_neither_signal_clears_threshold():
+    facts = facts_for_regional_weather_watch(10, 10)
+
+    matched_ids, _decision = matching_for(facts, "cycling")
+
+    assert REGIONAL_WATCH_ID not in matched_ids
+
+
+def test_compound_override_resolves_ahead_of_regional_watch_when_both_match():
+    facts = facts_for_regional_weather_watch(70, 45)
+
+    matched_ids, decision = matching_for(facts, "cycling")
+
+    assert COMPOUND_ID in matched_ids
+    assert REGIONAL_WATCH_ID in matched_ids
+    assert decision.primary.sop_id == COMPOUND_ID
+    assert REGIONAL_WATCH_ID in decision.also_applies
+
+
+def test_outdoor_wind_sop_covers_running_at_chennai_gust_value():
+    facts = facts_for_regional_weather_watch(10, 41.4)
+
+    matched_ids, _decision = matching_for(facts, "running")
+
+    assert OUTDOOR_WIND_ID in matched_ids
+
+
+def test_cycling_keeps_its_specific_higher_severity_wind_sop():
+    facts = facts_for_regional_weather_watch(10, 41.4)
+
+    matched_ids, decision = matching_for(facts, "cycling")
+
+    assert OUTDOOR_WIND_ID not in matched_ids
+    assert "wind-cycling-001" in matched_ids
+    assert decision.primary.sop_id == "wind-cycling-001"
+
+
+def test_outdoor_wind_sop_does_not_match_below_40():
+    facts = facts_for_regional_weather_watch(10, 39)
+
+    matched_ids, _decision = matching_for(facts, "running")
+
+    assert OUTDOOR_WIND_ID not in matched_ids
+
+
+def test_full_sop_directory_loads_thirteen_unique_sops():
+    sops = load_sops("sops")
+    ids = [sop.id for sop in sops]
+
+    assert len(ids) == 13
+    assert len(ids) == len(set(ids))
+    assert REGIONAL_WATCH_ID in ids
+    assert OUTDOOR_WIND_ID in ids
+
+
+def test_regional_advisory_is_primary_for_activity_without_specific_wind_sop():
+    facts = facts_for_regional_weather_watch(None, 45)
+
+    matched_ids, decision = matching_for(facts, "travel")
+
+    assert REGIONAL_WATCH_ID in matched_ids
+    assert COMPOUND_ID not in matched_ids
+    assert decision.primary.sop_id == REGIONAL_WATCH_ID
+
+
+def test_outdoor_wind_sop_covers_listed_activities_but_not_cycling():
+    facts = facts_for_regional_weather_watch(10, 45)
+
+    for activity_tag in (
+        "running",
+        "outdoor_exercise",
+        "pet_walk",
+        "child_outdoor_play",
+        "elderly",
+    ):
+        matched_ids, _decision = matching_for(facts, activity_tag)
+        assert OUTDOOR_WIND_ID in matched_ids
+
+    matched_ids, decision = matching_for(facts, "cycling")
+    assert OUTDOOR_WIND_ID not in matched_ids
+    assert "wind-cycling-001" in matched_ids
+    assert decision.primary.sop_id == "wind-cycling-001"
