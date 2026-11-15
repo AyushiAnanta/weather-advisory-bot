@@ -361,7 +361,7 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             sop_conditions = (sop.conditions.all or []) + (sop.conditions.any or [])
             comparisons = []
             for condition in sop_conditions:
-                _matched, actual = evaluate_condition(condition, eval_facts, eval_now)
+                matched, actual = evaluate_condition(condition, eval_facts, eval_now)
                 comparisons.append(
                     {
                         "source": condition.source,
@@ -369,6 +369,7 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
                         "op": condition.op,
                         "actual": actual,
                         "threshold": condition.value,
+                        "met": matched,
                     }
                 )
             policies_checked.append(

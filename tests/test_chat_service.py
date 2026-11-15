@@ -45,6 +45,42 @@ def test_format_comparison_triggered_with_threshold_says_met():
     }
 
     assert format_comparison(comparison, matched=True) == "max wind_gusts_10m: 43.9 >= 40 -> met"
+
+
+def test_format_comparison_uses_evaluated_met_value():
+    assert format_comparison(
+        {
+            "agg": "max",
+            "field": "wind_gusts_10m",
+            "actual": 45,
+            "op": ">=",
+            "threshold": 40,
+            "met": True,
+        }
+    ) == "max wind_gusts_10m: 45 >= 40 -> met"
+    assert format_comparison(
+        {
+            "agg": "max",
+            "field": "precipitation_sum",
+            "actual": 0,
+            "op": ">=",
+            "threshold": 65,
+            "met": False,
+        }
+    ) == "max precipitation_sum: 0 >= 65 -> not met"
+
+
+def test_format_comparison_none_actual_says_no_data_in_window():
+    assert format_comparison(
+        {
+            "agg": "min",
+            "field": "temperature_2m",
+            "actual": None,
+            "op": "<=",
+            "threshold": 10,
+            "met": False,
+        }
+    ) == "min temperature_2m: no data in window (<= 10) -> not met"
 EXPECTED_KEYS = {
     "thread_id",
     "reply_body",
@@ -247,6 +283,34 @@ def test_untriggered_activity_reply_and_panel_include_evaluated_day(time_ref, ev
     assert wind_policy["severity"] == "high"
     assert wind_check["actual"] == 20
     assert wind_check["threshold"] == 40
+
+
+def test_not_triggered_panel_shows_each_compound_condition_result():
+    facts = facts_with_wind(45)
+    service, _calls = make_service(
+        extractions=[{"city": "Sample Place", "activity_tag": "running"}],
+        facts=[facts],
+    )
+
+    result = service.ask("running-compound-thread", "Check running.")
+
+    assert result["reply_kind"] == "no_match"
+    assert result["no_match_reason"] == "not_triggered"
+    compound = next(
+        policy
+        for policy in result["policies_checked"]
+        if policy["id"] == "compound-severe-weather-001"
+    )
+    rain = next(
+        item for item in compound["comparisons"] if item["field"] == "precipitation_sum"
+    )
+    gust = next(
+        item for item in compound["comparisons"] if item["field"] == "wind_gusts_10m"
+    )
+    assert rain["met"] is False
+    assert "-> not met" in rain["display"]
+    assert gust["met"] is True
+    assert gust["display"] == "max wind_gusts_10m: 45 >= 40 -> met"
 
 
 def test_classifier_response_includes_sop_and_all_five_fact_values():

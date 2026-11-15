@@ -42,9 +42,16 @@ def format_comparison(comparison: dict[str, Any], sop: SOP | None = None, matche
                 break
 
     prefix = f"{agg} " if agg else ""
-    text = f"{prefix}{comparison['field']}: {_number_text(comparison.get('actual'))}"
+    actual = comparison.get("actual")
+    actual_text = "no data in window" if actual is None else _number_text(actual)
+    text = f"{prefix}{comparison['field']}: {actual_text}"
     if "op" in comparison and "threshold" in comparison:
-        text += f" {comparison['op']} {_number_text(comparison['threshold'])} -> {'met' if matched else 'not met'}"
+        is_met = comparison.get("met", matched)
+        status = "met" if is_met else "not met"
+        if actual is None:
+            text += f" ({comparison['op']} {_number_text(comparison['threshold'])}) -> {status}"
+        else:
+            text += f" {comparison['op']} {_number_text(comparison['threshold'])} -> {status}"
     return text
 
 
