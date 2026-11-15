@@ -4,6 +4,8 @@
 
 This project provides weather guidance from YAML policies (SOPs) and forecast facts. One Streamlit app serves as both backend and frontend. The graph uses fixed policy logic for matching and keeps model input limited to question extraction, final wording, and the picnic classifier.
 
+LIVE URL = https://weather-advisory-bot-ananta.streamlit.app/
+
 ## Setup and run
 
 Use Python 3.12. Create and activate a virtual environment with `python -m venv .venv` and `.\.venv\Scripts\Activate.ps1`, then install dependencies with `pip install -r requirements.txt`. Copy `.env.example` to `.env` and set `OPENAI_API_KEY` in `.env` (the unused `LLM_API_KEY` entry has been removed); run `streamlit run streamlit_app.py`. The app and evals call the OpenAI API, which costs money. Run tests with `python -m pytest -q`; tests need no key or network. Run `python evals/run_evals.py` for evaluations; it needs the OpenAI key and network access, and includes live cases.
