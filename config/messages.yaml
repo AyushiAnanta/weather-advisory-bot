@@ -3,9 +3,9 @@ location_not_found: I couldn't find that place in India. I can only look up plac
 geocoding_unavailable: I can't look up that location right now. Please try again later.
 weather_unavailable: I can't reach the weather service right now, so I can't give you advice based on a forecast.
 no_match: We don't have guidance for that.
-no_policy_covers: "We don't have a policy that covers this question."
-not_triggered: "None of our {activity} policies are triggered by the forecast for {place} {when}. This is not a guarantee of safety."
-classifier_inconclusive: "We couldn't produce a verified answer for {activity} in {place} {when}. We have no guidance to give for this right now."
+no_policy_covers: "Sorry, I don't have a written policy that covers that, so I'd rather not guess. I can only give advice that comes from our written policies."
+not_triggered: "I checked our {activity} policies against the forecast for {place} as of {when}, and none of them are triggered. That isn't a guarantee of safety, so please use your own judgement too."
+classifier_inconclusive: "I couldn't settle on a confident answer about {activity} for {place} as of {when}, so I'd rather not guess."
 llm_unavailable: I'm having trouble generating a response right now. Please try again in a moment.
 chat_rejected_empty: Please enter a message before sending.
 chat_rejected_too_long: That message is too long. Please shorten it and try again.

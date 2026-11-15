@@ -1,6 +1,17 @@
 from datetime import datetime, timedelta
 
 
+def window_is_past(condition, now: datetime) -> bool:
+    if getattr(condition, "source", None) != "hourly":
+        return False
+    window = getattr(condition, "window", None)
+    return (
+        window is not None
+        and window.day == "today"
+        and window.end_hour < now.hour
+    )
+
+
 def resolve_eval_now(real_now: datetime, time_ref: str | None) -> datetime:
     if time_ref == "this_evening":
         evening = real_now.replace(hour=17, minute=0, second=0, microsecond=0)

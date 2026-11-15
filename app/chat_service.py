@@ -43,6 +43,12 @@ def format_comparison(comparison: dict[str, Any], sop: SOP | None = None, matche
 
     prefix = f"{agg} " if agg else ""
     actual = comparison.get("actual")
+    if actual is None and comparison.get("window_passed"):
+        window = comparison["window"]
+        return (
+            f"{prefix}{comparison['field']}: window already passed today "
+            f"(hours {window['start_hour']} to {window['end_hour']}) -> not met"
+        )
     actual_text = "no data in window" if actual is None else _number_text(actual)
     text = f"{prefix}{comparison['field']}: {actual_text}"
     if "op" in comparison and "threshold" in comparison:

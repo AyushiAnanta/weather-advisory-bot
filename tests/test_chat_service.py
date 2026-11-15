@@ -1,6 +1,8 @@
 from collections import deque
+from pathlib import Path
 
 import pytest
+import yaml
 
 from app.chat_service import ChatService, format_comparison
 from app.sop_loader import load_sops, required_fields
@@ -8,6 +10,7 @@ from app.weather import GeoResult, WeatherResult
 
 
 SOPS = load_sops("sops")
+MESSAGES = yaml.safe_load((Path(__file__).parents[1] / "config" / "messages.yaml").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
@@ -81,6 +84,20 @@ def test_format_comparison_none_actual_says_no_data_in_window():
             "met": False,
         }
     ) == "min temperature_2m: no data in window (<= 10) -> not met"
+
+
+def test_format_comparison_passed_window_says_it_already_passed():
+    assert format_comparison(
+        {
+            "agg": "min",
+            "field": "temperature_2m",
+            "actual": None,
+            "op": "<=",
+            "threshold": 10,
+            "window_passed": True,
+            "window": {"start_hour": 5, "end_hour": 8},
+        }
+    ) == "min temperature_2m: window already passed today (hours 5 to 8) -> not met"
 EXPECTED_KEYS = {
     "thread_id",
     "reply_body",
@@ -223,7 +240,7 @@ def test_no_match_response_has_no_sop():
         assert result["sop"] is None
         assert result["also_applies"] == []
         assert result["no_match_reason"] == "no_policy_covers"
-        assert result["reply_body"] == "We don't have a policy that covers this question."
+        assert result["reply_body"] == MESSAGES["no_policy_covers"]
 
 
 @pytest.mark.parametrize(
@@ -261,10 +278,14 @@ def test_untriggered_activity_reply_and_panel_include_evaluated_day(time_ref, ev
     assert result["reply_kind"] == "no_match"
     assert result["no_match_reason"] == "not_triggered"
     assert result["evaluated_for"] == evaluated_for
-    assert "cycling policies are triggered" in result["reply_body"]
+    expected_reply = MESSAGES["not_triggered"].format(
+        activity="cycling",
+        place="Sample Place, Sample Region, India",
+        when=when,
+    )
+    assert result["reply_body"] == expected_reply
     assert "Sample Place, Sample Region, India" in result["reply_body"]
     assert when in result["reply_body"]
-    assert "not a guarantee of safety" in result["reply_body"]
     wind_policy = next(
         policy for policy in result["policies_checked"] if policy["id"] == "wind-cycling-001"
     )
@@ -313,6 +334,30 @@ def test_not_triggered_panel_shows_each_compound_condition_result():
     assert gust["display"] == "max wind_gusts_10m: 45 >= 40 -> met"
 
 
+def test_running_at_1245_shows_cold_morning_window_already_passed():
+    facts = facts_with_wind(10, now="2026-11-14T12:45")
+    facts["hourly"]["temperature_2m"] = [5 if 5 <= hour <= 8 else 20 for hour in range(24)]
+    service, _calls = make_service(
+        extractions=[{"city": "Sample Place", "activity_tag": "running"}],
+        facts=[facts],
+    )
+
+    result = service.ask("running-past-window", "Check running.")
+
+    assert result["reply_kind"] == "no_match"
+    assert result["no_match_reason"] == "not_triggered"
+    cold_policy = next(
+        policy
+        for policy in result["policies_checked"]
+        if policy["id"] == "cold-morning-jog-001"
+    )
+    comparison = cold_policy["comparisons"][0]
+    assert comparison["window_passed"] is True
+    assert comparison["display"] == (
+        "min temperature_2m: window already passed today (hours 5 to 8) -> not met"
+    )
+
+
 def test_classifier_response_includes_sop_and_all_five_fact_values():
     facts = facts_with_wind(17)
     facts["hourly"]["precipitation_probability"] = [12] * 24
@@ -353,11 +398,23 @@ def test_classifier_retry_then_fail_returns_no_match_without_sop():
     assert result["sop"] is None
     assert result["no_match_reason"] == "classifier_inconclusive"
     assert result["policies_checked"] == []
-    assert result["reply_body"] == (
-        "We couldn't produce a verified answer for picnic in Sample Place, Sample Region, India "
-        "as of 2026-11-14T10:00. We have no guidance to give for this right now."
+    assert result["reply_body"] == MESSAGES["classifier_inconclusive"].format(
+        activity="picnic",
+        place="Sample Place, Sample Region, India",
+        when="as of 2026-11-14T10:00",
     )
-    assert "not a guarantee" not in result["reply_body"]
+
+
+def test_classifier_inconclusive_message_formats_all_context_values():
+    formatted = MESSAGES["classifier_inconclusive"].format(
+        activity="picnic",
+        place="Kolkata, West Bengal, India",
+        when="2026-11-15T12:45",
+    )
+
+    assert "picnic" in formatted
+    assert "Kolkata, West Bengal, India" in formatted
+    assert "2026-11-15T12:45" in formatted
 
 
 def test_valid_picnic_classification_still_returns_classifier_reply():

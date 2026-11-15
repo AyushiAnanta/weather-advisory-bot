@@ -15,7 +15,7 @@ from app.matcher import (
 )
 from app.messages import DEFAULT_MESSAGES_PATH, load_messages
 from app.sop_loader import SOP, all_activity_tags, required_fields
-from app.time_view import facts_for_time_ref, resolve_eval_now
+from app.time_view import facts_for_time_ref, resolve_eval_now, window_is_past
 from app.validation import allowed_numbers_for, build_template_reply, validate_reply
 
 
@@ -362,16 +362,22 @@ def build_graph(sops: list[SOP], deps: dict[str, Any], checkpointer=None):
             comparisons = []
             for condition in sop_conditions:
                 matched, actual = evaluate_condition(condition, eval_facts, eval_now)
-                comparisons.append(
-                    {
-                        "source": condition.source,
-                        "field": condition.field,
-                        "op": condition.op,
-                        "actual": actual,
-                        "threshold": condition.value,
-                        "met": matched,
+                comparison = {
+                    "source": condition.source,
+                    "field": condition.field,
+                    "op": condition.op,
+                    "actual": actual,
+                    "threshold": condition.value,
+                    "met": matched,
+                    "window_passed": window_is_past(condition, eval_now),
+                }
+                condition_window = getattr(condition, "window", None)
+                if condition_window is not None:
+                    comparison["window"] = {
+                        "start_hour": condition_window.start_hour,
+                        "end_hour": condition_window.end_hour,
                     }
-                )
+                comparisons.append(comparison)
             policies_checked.append(
                 {"id": sop.id, "severity": sop.severity, "comparisons": comparisons}
             )
