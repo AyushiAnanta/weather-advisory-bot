@@ -4,8 +4,8 @@ geocoding_unavailable: I can't look up that location right now. Please try again
 weather_unavailable: I can't reach the weather service right now, so I can't give you advice based on a forecast.
 no_match: We don't have guidance for that.
 no_policy_covers: "Sorry, I don't have a written policy that covers that, so I'd rather not guess. I can only give advice that comes from our written policies."
-not_triggered: "I checked our {activity} policies against the forecast for {place} as of {when}, and none of them are triggered. That isn't a guarantee of safety, so please use your own judgement too."
-classifier_inconclusive: "I couldn't settle on a confident answer about {activity} for {place} as of {when}, so I'd rather not guess."
+not_triggered: "I checked our {activity} policies against the forecast for {place} {when}, and none of them are triggered. That isn't a guarantee of safety, so please use your own judgement too."
+classifier_inconclusive: "I couldn't settle on a confident answer about {activity} for {place} {when}, so I'd rather not guess."
 llm_unavailable: I'm having trouble generating a response right now. Please try again in a moment.
 chat_rejected_empty: Please enter a message before sending.
 chat_rejected_too_long: That message is too long. Please shorten it and try again.

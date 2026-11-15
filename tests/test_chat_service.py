@@ -98,6 +98,48 @@ def test_format_comparison_passed_window_says_it_already_passed():
             "window": {"start_hour": 5, "end_hour": 8},
         }
     ) == "min temperature_2m: window already passed today (hours 5 to 8) -> not met"
+
+
+@pytest.mark.parametrize(
+    ("when", "expected_not_triggered", "expected_classifier"),
+    [
+        (
+            "as of 2026-11-15T12:45",
+            "I checked our cycling policies against the forecast for Kolkata, West Bengal, India as of 2026-11-15T12:45, and none of them are triggered. That isn't a guarantee of safety, so please use your own judgement too.",
+            "I couldn't settle on a confident answer about picnic for Kolkata, West Bengal, India as of 2026-11-15T12:45, so I'd rather not guess.",
+        ),
+        (
+            "for this evening",
+            "I checked our cycling policies against the forecast for Kolkata, West Bengal, India for this evening, and none of them are triggered. That isn't a guarantee of safety, so please use your own judgement too.",
+            "I couldn't settle on a confident answer about picnic for Kolkata, West Bengal, India for this evening, so I'd rather not guess.",
+        ),
+        (
+            "for tomorrow",
+            "I checked our cycling policies against the forecast for Kolkata, West Bengal, India for tomorrow, and none of them are triggered. That isn't a guarantee of safety, so please use your own judgement too.",
+            "I couldn't settle on a confident answer about picnic for Kolkata, West Bengal, India for tomorrow, so I'd rather not guess.",
+        ),
+    ],
+)
+def test_no_match_messages_render_complete_when_phrase(when, expected_not_triggered, expected_classifier):
+    not_triggered = MESSAGES["not_triggered"].format(
+        activity="cycling",
+        place="Kolkata, West Bengal, India",
+        when=when,
+    )
+    classifier = MESSAGES["classifier_inconclusive"].format(
+        activity="picnic",
+        place="Kolkata, West Bengal, India",
+        when=when,
+    )
+
+    for rendered, expected in (
+        (not_triggered, expected_not_triggered),
+        (classifier, expected_classifier),
+    ):
+        assert rendered == expected
+        assert "as of as of" not in rendered
+        assert "as of for" not in rendered
+        assert "  " not in rendered
 EXPECTED_KEYS = {
     "thread_id",
     "reply_body",
@@ -246,15 +288,17 @@ def test_no_match_response_has_no_sop():
 @pytest.mark.parametrize(
     ("time_ref", "evaluated_for", "when"),
     [
-        (None, "today", "as of 2026-11-14T10:00"),
+        (None, "today", "as of 2026-11-15T12:45"),
         ("this_evening", "this_evening", "for this evening"),
         ("tomorrow", "tomorrow", "for tomorrow"),
     ],
 )
 def test_untriggered_activity_reply_and_panel_include_evaluated_day(time_ref, evaluated_for, when):
-    facts = facts_with_wind(20)
+    facts = facts_with_wind(20, now="2026-11-15T12:45")
+    facts["hourly"]["time"] = [f"2026-11-15T{hour:02}:00" for hour in range(24)]
+    facts["daily"]["time"] = ["2026-11-15", "2026-11-16"]
     today = facts["hourly"]["time"][0][:10]
-    tomorrow = "2026-11-15" if today == "2026-11-14" else "2026-11-14"
+    tomorrow = "2026-11-16" if today == "2026-11-15" else "2026-11-15"
     facts["hourly"]["time"] += [
         f"{tomorrow}T{hour:02}:00" for hour in range(24)
     ]
@@ -409,7 +453,7 @@ def test_classifier_inconclusive_message_formats_all_context_values():
     formatted = MESSAGES["classifier_inconclusive"].format(
         activity="picnic",
         place="Kolkata, West Bengal, India",
-        when="2026-11-15T12:45",
+        when="as of 2026-11-15T12:45",
     )
 
     assert "picnic" in formatted
