@@ -1,0 +1,14 @@
+﻿id: low-visibility-cycling-001
+category: exercise
+severity: medium
+applies_to:
+  - cycling
+  - running
+conditions:
+  all:
+    - source: hourly
+      field: visibility
+      agg: min
+      op: "<"
+      value: 1000
+guidance: Visibility is low. Avoid cycling or running on roads, use lights and reflective gear if you must go out, and consider postponing.
