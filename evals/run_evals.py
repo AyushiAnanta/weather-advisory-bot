@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import uuid
 from collections.abc import Callable
@@ -18,12 +19,12 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-from app.graph import build_graph
+from app.graph import ComposeInput, build_graph
 from app.llm import real_classify, real_compose, real_understand
 from app.matcher import match_sops
 from app.sop_loader import SOP, load_sops, required_fields
-from app.validation import extract_numbers
-from app.weather import GeoResult, WeatherResult, geocode
+from app.validation import allowed_numbers_for, extract_numbers, validate_reply
+from app.weather import GeoResult, WeatherResult, fetch_weather as real_fetch_weather, geocode
 
 
 EVALS_DIR = Path(__file__).resolve().parent
@@ -39,6 +40,7 @@ def make_fixture(
     uv_peak: float | None = None,
     weather_code_peak: int | None = None,
     picnic_bad: bool = False,
+    daily_rain: float = 0.0,
 ) -> dict[str, Any]:
     now = datetime.fromisoformat(FIXED_NOW)
     times = [(now.replace(hour=0, minute=0) + timedelta(hours=offset)).isoformat(timespec="minutes") for offset in range(48)]
@@ -70,7 +72,7 @@ def make_fixture(
         hourly["weather_code"][15] = weather_code_peak
 
     daily_times = [now.date().isoformat(), (now.date() + timedelta(days=1)).isoformat()]
-    daily_defaults = {"precipitation_sum": 0.0}
+    daily_defaults = {"precipitation_sum": daily_rain}
     daily = {"time": daily_times}
     for field in fields["daily"]:
         daily[field] = [daily_defaults.get(field, 0)] * 2
@@ -100,6 +102,7 @@ def write_fixtures(fields: dict[str, list[str]]) -> None:
         "uv_9_noon.json": {"uv_peak": 9},
         "weather_code_95.json": {"weather_code_peak": 95},
         "picnic_bad.json": {"picnic_bad": True},
+        "severe_synthetic_heavy_rain.json": {"gust_peak": 45, "weather_code_peak": 63, "daily_rain": 90},
     }
     for filename, overrides in fixture_specs.items():
         contents = make_fixture(fields, **overrides)
@@ -283,6 +286,203 @@ def classifier_unsuitable_outcome_check(result: dict[str, Any], _case: dict[str,
     return passed, f"kind={result.get('reply_kind')}, exact_unsuitable={result.get('reply_body') == expected}"
 
 
+def read_recorded_kl(fields: dict[str, list[str]]) -> tuple[dict[str, Any], list[str], list[int]]:
+    raw = json.loads((ROOT / "tests" / "fixtures" / "kl_thunderstorm_partial.json").read_text(encoding="utf-8"))["data"]
+    now = "2026-11-13T02:00"
+    hourly = {"time": list(raw["hourly"]["time"])}
+    filled: list[str] = []
+    benign_values = {
+        "apparent_temperature": 24.0,
+        "temperature_2m": 24.0,
+        "uv_index": 2.0,
+    }
+    for field in fields["hourly"]:
+        if field in raw["hourly"]:
+            hourly[field] = list(raw["hourly"][field])
+        else:
+            hourly[field] = [benign_values.get(field, 10.0)] * len(hourly["time"])
+            filled.append(f"hourly.{field}")
+    current = {"temperature_2m": raw["current"].get("temperature_2m", 24.0)}
+    daily = {"time": list(raw["daily"]["time"])}
+    for field in fields["daily"]:
+        if field in raw["daily"]:
+            daily[field] = list(raw["daily"][field])
+        else:
+            daily[field] = [0.0] * len(daily["time"])
+            filled.append(f"daily.{field}")
+    facts = {
+        "now": now,
+        "timezone": raw.get("timezone", "Asia/Kuala_Lumpur"),
+        "utc_offset_seconds": raw.get("utc_offset_seconds"),
+        "grid_latitude": raw.get("latitude"),
+        "grid_longitude": raw.get("longitude"),
+        "units": {
+            "current": raw.get("current_units", {}),
+            "hourly": raw.get("hourly_units", {}),
+            "daily": raw.get("daily_units", {}),
+        },
+        "current": current,
+        "hourly": hourly,
+        "daily": daily,
+    }
+    codes = [code for code in raw["hourly"]["weather_code"] if isinstance(code, int)]
+    return facts, filled, codes
+
+
+def recorded_thunderstorm_check(result: dict[str, Any], case: dict[str, Any], _sops: dict[str, SOP]) -> tuple[bool, str]:
+    primary = result.get("decision", {}).get("primary", {})
+    triggers = primary.get("trigger_values", [])
+    actuals = [item.get("actual") for item in triggers if item.get("field") == "weather_code"]
+    fixture_codes = case.get("fixture_codes", [])
+    passed = (
+        primary.get("sop_id") == "thunderstorm-proxy-001"
+        and primary_id(result) == "thunderstorm-proxy-001"
+        and any(actual in fixture_codes for actual in actuals)
+    )
+    from_fixture = any(actual in fixture_codes for actual in actuals)
+    return passed, f"primary={primary_id(result)}, weather_code_actuals={actuals}, trigger_actual_in_fixture={from_fixture}"
+
+
+def synthetic_heavy_rain_check(result: dict[str, Any], _case: dict[str, Any], _sops: dict[str, SOP]) -> tuple[bool, str]:
+    decision = result.get("decision") or {}
+    primary = (decision.get("primary") or {}).get("sop_id")
+    secondary = decision.get("also_applies", [])
+    reply = result.get("reply", "")
+    passed = (
+        primary == "compound-severe-weather-001"
+        and "90" in reply
+        and "45" in reply
+        and "wind-cycling-001" in secondary
+    )
+    return passed, f"primary={primary}, contains_90={'90' in reply}, contains_45={'45' in reply}, also_applies={secondary}"
+
+
+def severe_live_wettest_check(result: dict[str, Any], case: dict[str, Any], sops_by_id: dict[str, SOP]) -> tuple[bool, str]:
+    matched = result.get("matched", [])
+    matched_ids = [item.get("sop_id") for item in matched]
+    place = (result.get("location") or {}).get("display")
+    reply = result.get("reply", "")
+    kind = result.get("reply_kind")
+    passed = kind == "advice" or (kind == "no_match" and result.get("no_match_reason") == "not_triggered")
+    passed = passed and bool(place) and place in reply
+    if kind == "advice":
+        matched_result = dict(
+            result,
+            cited_sop_ids=matched_ids,
+            trigger_values=[trigger for item in matched for trigger in item.get("trigger_values", [])],
+        )
+        allowed = numbers_allowed_by_sop_and_triggers(matched_result, sops_by_id)
+        unsupported = [number for number in extract_numbers(result.get("reply_body", "")) if number not in allowed]
+        passed = passed and not unsupported
+    else:
+        unsupported = []
+    detail = (
+        f"chosen_city={case.get('chosen_city')}, precipitation_sum={case.get('precipitation_sum')}, "
+        f"matched_sops={matched_ids}, kind={kind}, place_in_reply={bool(place) and place in reply}, "
+        f"unsupported_numbers={unsupported}; second fetch may differ slightly from scan; grounding, not severity"
+    )
+    return bool(passed), detail
+
+
+def compose_rounding_case(sop: SOP, value: float, repeats: int = 4) -> tuple[int, int, list[tuple[float, str]]]:
+    location = "Bhopal, Madhya Pradesh, India"
+    triggers = [{"source": "hourly", "field": "wind_gusts_10m", "agg": "max", "op": ">=", "value": 40, "actual": value}]
+    decision = {
+        "primary": {"sop_id": sop.id, "guidance": sop.guidance, "severity": sop.severity, "trigger_values": triggers},
+        "also_applies": [],
+    }
+    allowed = allowed_numbers_for(decision, triggers, location)
+    passed_count = 0
+    failures: list[tuple[float, str]] = []
+    for _ in range(repeats):
+        compose_input = ComposeInput(
+            primary_guidance=sop.guidance,
+            primary_sop_id=sop.id,
+            primary_severity=sop.severity,
+            also_applies=[],
+            trigger_values=triggers,
+            location_display=location,
+            evaluated_for="today",
+            previous_decision=None,
+        )
+        reply = real_compose(compose_input)
+        valid, _reasons = validate_reply(reply, allowed, [sop.id])
+        exact_value_present = str(value) in reply
+        if valid and exact_value_present:
+            passed_count += 1
+        else:
+            failures.append((value, reply))
+    return passed_count, repeats, failures
+
+
+def scan_wettest_city(fields: dict[str, list[str]]) -> tuple[str, float] | None:
+    cities = [
+        "Mumbai", "Kolkata", "Chennai", "Bhopal", "Thiruvananthapuram", "Guwahati",
+        "Kochi", "Bengaluru", "Hyderabad", "Visakhapatnam", "Mawsynram", "Cherrapunji",
+    ]
+    candidates: list[tuple[str, float]] = []
+    for city in cities:
+        try:
+            location = geocode(city)
+            if not location.ok:
+                continue
+            weather = real_fetch_weather(location.latitude, location.longitude, fields)
+            if not weather.ok or not weather.facts:
+                continue
+            values = weather.facts.get("daily", {}).get("precipitation_sum", [])
+            value = values[0] if values else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                candidates.append((city, float(value)))
+        except Exception:
+            continue
+    return max(candidates, key=lambda item: item[1]) if candidates else None
+
+
+def combine_results(table_rows: list[list[str]], failures: list[tuple[str, int, str, str]], replaced_ids: set[str]) -> tuple[list[list[str]], str]:
+    previous_rows: dict[str, list[str]] = {}
+    previous_failures: list[str] = []
+    if RESULTS_PATH.exists():
+        previous = RESULTS_PATH.read_text(encoding="utf-8")
+
+        def cells(line: str) -> list[str]:
+            sentinel = "\0PIPE\0"
+            return [part.replace("\\|", sentinel).replace(sentinel, "|").strip() for part in line.strip().strip("|").split("|")]
+
+        in_table = False
+        for line in previous.splitlines():
+            if line.startswith("| id | mode |"):
+                in_table = True
+                continue
+            if in_table and line.startswith("| ---"):
+                continue
+            if in_table and line.startswith("|"):
+                row = cells(line)
+                if len(row) >= 6:
+                    previous_rows[row[0]] = [row[0], row[1], row[2], row[3], row[4], row[5]]
+            elif in_table:
+                in_table = False
+
+        if "## Failing replies" in previous:
+            failure_section = previous.split("## Failing replies", 1)[1]
+            previous_failures = re.findall(r"(?ms)^### .+?(?=^### |\Z)", failure_section.strip())
+            previous_failures = [
+                block.strip()
+                for block in previous_failures
+                if block.strip() and block.splitlines()[0][4:].split(", run", 1)[0] not in replaced_ids
+            ]
+
+    for row in table_rows[1:]:
+        previous_rows[row[0]] = row
+    merged_rows = [table_rows[0], *previous_rows.values()]
+
+    new_failures = [
+        f"### {case_id}, run {run_number}\n\nDetail: {detail}\n\n```text\n{reply}\n```"
+        for case_id, run_number, reply, detail in failures
+    ]
+    all_failures = [*previous_failures, *new_failures]
+    return merged_rows, "\n\n".join(all_failures) if all_failures else "None."
+
+
 def validator_variant_check(forbidden: str) -> Callable[[dict[str, Any], dict[str, Any], dict[str, SOP]], tuple[bool, str]]:
     def check(result: dict[str, Any], _case: dict[str, Any], sops_by_id: dict[str, SOP]) -> tuple[bool, str]:
         reply = result.get("reply_body", "")
@@ -442,6 +642,48 @@ def main() -> None:
             "fixture": "picnic_bad.json",
             "check": classifier_unsuitable_outcome_check,
         },
+        {
+            "id": "severe-live-wettest",
+            "what_it_checks": "Grounding for the wettest available live city; second fetch can differ slightly from scan, tests grounding rather than severity",
+            "pass_criteria": "Reply is advice or not-triggered no-match, names the resolved place, and advice numbers come from matched SOPs or trigger facts.",
+            "mode": "LIVE-WEATHER+live-LLM",
+            "messages": [],
+            "fixture": {"live_wettest": True},
+            "check": severe_live_wettest_check,
+            "real_weather": True,
+            "notes_suffix": "Wettest available; the graph performs a second live fetch that may differ slightly from the scan; this proves grounding, not severity.",
+        },
+        {
+            "id": "severe-recorded-kl",
+            "what_it_checks": "Thunderstorm rule using a Kuala Lumpur recording attached to an Indian place",
+            "pass_criteria": "Thunderstorm SOP is primary and its trigger actual is a weather code present in the recording.",
+            "mode": "recorded-fixture+mocked-LLM+geocode",
+            "messages": ["Is it safe to cycle in Bhopal today?"],
+            "fixture": {"recorded_kl": True},
+            "check": recorded_thunderstorm_check,
+            "mock_recorded_kl": True,
+            "notes_suffix": "Weather is a Kuala Lumpur recording attached to Indian city name Bhopal; tests rule logic only.",
+        },
+        {
+            "id": "severe-synthetic-heavy-rain",
+            "what_it_checks": "Override precedence for synthetic heavy rain and gusts",
+            "pass_criteria": "Compound severe weather is primary, reply contains 90 and 45, and wind-cycling-001 is in also_applies.",
+            "mode": "SYNTHETIC",
+            "messages": ["Is it safe to cycle in Bhopal today?"],
+            "fixture": "severe_synthetic_heavy_rain.json",
+            "check": synthetic_heavy_rain_check,
+            "mock_cycle": True,
+        },
+        {
+            "id": "compose-rounding-repeat",
+            "what_it_checks": "Repeated live compose keeps non-round gust values exact and validator-accepted",
+            "pass_criteria": "Each reply passes validate_reply with allowed_numbers_for and includes the supplied gust value exactly.",
+            "mode": "live-LLM compose only",
+            "messages": [],
+            "fixture": "synthetic ComposeInput values [43.9, 41.3, 47.7, 52.1, 38.6], four calls each",
+            "check": None,
+            "total_runs": 20,
+        },
         *[
             {
                 "id": f"validator-invented-number-{variant}",
@@ -470,10 +712,50 @@ def main() -> None:
             parser.error(f"unknown case id(s): {', '.join(unknown)}")
         cases = [case for case in cases if case["id"] in set(args.case)]
 
+    for case in cases:
+        if case["id"] == "severe-live-wettest":
+            wettest = scan_wettest_city(fields)
+            if wettest is None:
+                case["skip_reason"] = "SKIPPED (no live weather)"
+            else:
+                case["chosen_city"], case["precipitation_sum"] = wettest
+                case["messages"] = [f"Is it safe to cycle in {case['chosen_city']} today?"]
+        elif case["id"] == "severe-recorded-kl":
+            fixture, filled_fields, fixture_codes = read_recorded_kl(fields)
+            case["runtime_fixture"] = fixture
+            case["fixture_codes"] = fixture_codes
+            case["notes_suffix"] += f" Filled benign values for: {filled_fields}. now={fixture['now']} places code 95 at 03:00 after now."
+            print(f"severe-recorded-kl filled fields: {filled_fields}")
+            print(f"severe-recorded-kl now={fixture['now']}; code 95 at 03:00 remains ahead.")
+
     rows: list[dict[str, Any]] = []
     failures: list[tuple[str, int, str, str]] = []
     for case in cases:
-        fixture = read_fixture(case["fixture"]) if isinstance(case["fixture"], str) else None
+        if case.get("skip_reason"):
+            rows.append({**case, "passed": 0, "total_runs": 3, "notes": case["skip_reason"]})
+            continue
+        if case["id"] == "compose-rounding-repeat":
+            sop = sops_by_id["wind-cycling-001"]
+            passed_count = 0
+            failed_values: list[str] = []
+            for value in [43.9, 41.3, 47.7, 52.1, 38.6]:
+                value_passes, _repeats, value_failures = compose_rounding_case(sop, value)
+                passed_count += value_passes
+                failed_values.extend(str(failure_value) for failure_value, _reply in value_failures)
+                for run_offset, (failure_value, reply) in enumerate(value_failures, start=1):
+                    failures.append((case["id"], len(failures) + 1, reply, f"value={failure_value}; validator rejected or exact value absent"))
+            notes = (
+                f"allowed_numbers_for(decision, trigger_values, location_display); "
+                f"failures by value={failed_values or 'none'}"
+            )
+            rows.append({**case, "passed": passed_count, "total_runs": 20, "notes": notes})
+            continue
+
+        fixture = (
+            case.get("runtime_fixture")
+            if case.get("runtime_fixture") is not None
+            else read_fixture(case["fixture"]) if isinstance(case["fixture"], str) else None
+        )
         passed_count = 0
         notes: list[str] = []
         for run_number in range(1, 4):
@@ -485,10 +767,15 @@ def main() -> None:
                 fetch_called = True
                 if _case.get("fetch_raises"):
                     raise AssertionError("weather fetch must not run for foreign-city case")
+                if _case.get("real_weather"):
+                    return real_fetch_weather(_lat, _lon, _requested_fields)
                 failure = _case["fixture"].get("failure") if isinstance(_case["fixture"], dict) else None
                 if failure:
                     return WeatherResult(ok=False, reason=failure)
-                return WeatherResult(ok=True, facts=json.loads(json.dumps(_fixture)))
+                returned_facts = _fixture if _fixture is not None else _case.get("runtime_fixture")
+                if returned_facts is None:
+                    return WeatherResult(ok=False, reason="weather_unavailable")
+                return WeatherResult(ok=True, facts=json.loads(json.dumps(returned_facts)))
 
             understand = real_understand
             classify = real_classify
@@ -504,6 +791,18 @@ def main() -> None:
                     latitude=22.5726, longitude=88.3639, timezone="Asia/Kolkata",
                     display="Kolkata, West Bengal, India",
                 )
+            if case.get("mock_recorded_kl") or case.get("mock_cycle"):
+                place = "Bhopal"
+                understand = lambda _message, _tags, _summary: {
+                    "city": place, "activity_tag": "cycling", "time_ref": None, "is_followup": False
+                }
+                geocode_fn = lambda _city: GeoResult(
+                    ok=True, name=place, admin1="Madhya Pradesh", country="India",
+                    latitude=23.2599, longitude=77.4126, timezone="Asia/Kolkata",
+                    display="Bhopal, Madhya Pradesh, India",
+                )
+            if case.get("mock_cycle"):
+                compose = lambda _input: "Daily precipitation is 90 mm and wind gusts are 45 km/h."
             if case.get("compose_override") is not None:
                 compose_text = case["compose_override"]
                 understand = lambda _message, _tags, _summary: {
@@ -554,12 +853,16 @@ def main() -> None:
             }
         )
 
-    headers = ["id", "mode", "what it checks", "pass criterion", "result n/3", "notes"]
+    headers = ["id", "mode", "what it checks", "pass criterion", "result", "notes"]
     table_rows = [headers]
     for row in rows:
-        mode = f"{row['mode']} (SYNTHETIC)" if isinstance(row["fixture"], str) and not row.get("fetch_raises") else row["mode"]
+        mode = (
+            f"{row['mode']} (SYNTHETIC)"
+            if isinstance(row["fixture"], str) and not row.get("fetch_raises") and row["mode"] != "SYNTHETIC"
+            else row["mode"]
+        )
         table_rows.append(
-            [row["id"], mode, row["what_it_checks"], row["pass_criteria"], f"{row['passed']}/3", row["notes"]]
+            [row["id"], mode, row["what_it_checks"], row["pass_criteria"], f"{row['passed']}/{row.get('total_runs', 3)}", row["notes"]]
         )
 
     def markdown_table(values: list[list[str]]) -> str:
@@ -573,7 +876,8 @@ def main() -> None:
         f"### {case_id}, run {run_number}\n\nDetail: {detail}\n\n```text\n{reply}\n```"
         for case_id, run_number, reply, detail in failures
     ) or "None."
-    results_text = "# Evaluation results\n\n" + markdown_table(table_rows) + "\n\n## Failing replies\n\n" + failing_text + "\n"
+    merged_rows, merged_failing_text = combine_results(table_rows, failures, {case["id"] for case in cases})
+    results_text = "# Evaluation results\n\n" + markdown_table(merged_rows) + "\n\n## Failing replies\n\n" + merged_failing_text + "\n"
     RESULTS_PATH.write_text(results_text, encoding="utf-8")
 
     print(markdown_table(table_rows))
