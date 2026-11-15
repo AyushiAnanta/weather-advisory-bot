@@ -32,6 +32,7 @@ def facts_with(hourly_overrides=None, daily_overrides=None, now=NOW):
         "uv_index": 0,
         "weather_code": 3,
         "pressure_msl": 1010,
+        "visibility": 20000,
     }
     hourly = {"time": hourly_times}
     for field in fields["hourly"]:

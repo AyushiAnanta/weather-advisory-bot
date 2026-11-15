@@ -73,6 +73,7 @@ def facts_with_wind(gust_peak=10, now="2026-11-14T10:00"):
         "uv_index": 0,
         "weather_code": 3,
         "pressure_msl": 1010,
+        "visibility": 20000,
     }
     hourly = {"time": times}
     for field in fields["hourly"]:

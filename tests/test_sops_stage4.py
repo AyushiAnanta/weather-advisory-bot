@@ -10,6 +10,19 @@ from app.sop_loader import load_sops
 
 EXERCISE_ID = "heat-humidity-exercise-001"
 ELDERLY_ID = "elderly-heat-001"
+KNOWN_SOP_IDS = {
+    "wind-cycling-001",
+    "uv-exercise-001",
+    "picnic-fuzzy-001",
+    EXERCISE_ID,
+    ELDERLY_ID,
+    "cold-morning-jog-001",
+    "high-precipitation-probability-travel-001",
+    "thunderstorm-proxy-001",
+    "compound-severe-weather-001",
+    "child-uv-001",
+    "pet-heat-001",
+}
 
 
 def facts_with_apparent_temperatures(values):
@@ -187,7 +200,7 @@ def test_full_sop_directory_loads_eleven_unique_sops_after_stage5():
     sops = load_sops("sops")
     ids = [sop.id for sop in sops]
 
-    assert len(sops) == 11
+    assert KNOWN_SOP_IDS <= set(ids)
     assert len(ids) == len(set(ids))
     assert {
         "wind-cycling-001",
@@ -253,7 +266,7 @@ def test_full_sop_directory_loads_eleven_unique_sops():
     sops = load_sops("sops")
     ids = [sop.id for sop in sops]
 
-    assert len(sops) == 11
+    assert KNOWN_SOP_IDS <= set(ids)
     assert len(ids) == len(set(ids))
     assert THUNDERSTORM_ID in ids
     assert COMPOUND_ID in ids

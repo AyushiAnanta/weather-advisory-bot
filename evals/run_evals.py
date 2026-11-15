@@ -52,6 +52,7 @@ def make_fixture(
         "uv_index": 2.0,
         "weather_code": 3,
         "wind_gusts_10m": 10.0,
+        "visibility": 20000,
     }
     for field in fields["hourly"]:
         hourly[field] = [defaults.get(field, 0)] * 48
@@ -295,6 +296,7 @@ def read_recorded_kl(fields: dict[str, list[str]]) -> tuple[dict[str, Any], list
         "apparent_temperature": 24.0,
         "temperature_2m": 24.0,
         "uv_index": 2.0,
+        "visibility": 20000,
     }
     for field in fields["hourly"]:
         if field in raw["hourly"]:
